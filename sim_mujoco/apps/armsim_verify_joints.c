@@ -39,12 +39,12 @@ static void update_stats(
     const joint_sweep_t *sweep) {
   const arm_real_t tolerance = 1e-7;
   for (uint8_t i = 0u; i < arm->dof; ++i) {
-    const arm_real_t expected_mj_ctrl = arm->config->joints[i].sign * command->tau_nm[i];
+    const arm_real_t expected_mj_ctrl = arm->config->joints[i].sign * command->tau_ff_nm[i];
     if (arm_abs(mj_ctrl[i] - expected_mj_ctrl) > tolerance) {
       ++stats->ctrl_mismatch_count;
     }
     if ((int)i != sweep->active_joint) {
-      const arm_real_t passive = arm_abs(command->tau_nm[i]);
+      const arm_real_t passive = arm_abs(command->tau_ff_nm[i]);
       if (passive > stats->max_passive_cmd_abs) {
         stats->max_passive_cmd_abs = passive;
       }
@@ -132,6 +132,8 @@ int main(int argc, char **argv) {
   joint_sweep_t sweep;
   joint_sweep_init(&sweep, core.config.dof, (joint_sweep_params_t){1.0, 0.35, 0.25});
   arm_controller_t controller = joint_sweep_as_controller(&sweep);
+  arm_reference_t ref;
+  arm_reference_zero(&ref, core.config.dof);
 
   csv_logger_t logger;
   if (!csv_logger_open(&logger, log_path, core.config.dof) || !csv_logger_write_header(&logger)) {
@@ -148,7 +150,7 @@ int main(int argc, char **argv) {
   const arm_real_t duration_s = joint_sweep_total_duration(&sweep) + 0.1;
 
   while ((arm_real_t)data->time < duration_s && !sweep.complete) {
-    const int step_status = armsim_step_once(model, data, &arm, &core, &controller);
+    const int step_status = armsim_step_once(model, data, &arm, &core, &ref, &controller);
     if (step_status != ARM_OK) {
       fprintf(stderr, "Simulation step failed: %d\n", step_status);
       csv_logger_close(&logger);

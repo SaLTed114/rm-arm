@@ -11,6 +11,7 @@ int armsim_step_once(
     mjData *data,
     const mujoco_arm_t *arm,
     arm_t *core,
+    const arm_reference_t *ref,
     arm_controller_t *controller);
 
 #endif

@@ -5,16 +5,22 @@
 #include <GLFW/glfw3.h>
 #include <mujoco/mujoco.h>
 
-#include "arm_core/joint_sweep.h"
+#include "arm_core/joint_pvi.h"
 #include "armsim/default_arm_config.h"
 #include "armsim/mujoco_arm.h"
+#include "armsim/sim_impairment.h"
 #include "armsim/sim_loop.h"
 
-#define PANEL_WIDTH 340
+#define PANEL_WIDTH 360
 #define SLIDER_X 24
-#define SLIDER_W 220
+#define SLIDER_W 230
 #define SLIDER_H 18
 #define ROW_H 58
+
+typedef enum {
+  VIEWER_MODE_POSE_EDIT = 0,
+  VIEWER_MODE_DYNAMIC = 1,
+} viewer_mode_t;
 
 typedef struct {
   mjModel *model;
@@ -27,11 +33,16 @@ typedef struct {
   mjrContext context;
 
   arm_t core;
-  joint_sweep_t sweep;
+  arm_reference_t ref;
+  joint_pvi_t pvi;
   arm_controller_t controller;
+  armsim_impairment_t impairment;
 
-  double joint_angle_rad[ARM_DOF_MAX];
-  bool sweep_running;
+  double slider_angle_rad[ARM_DOF_MAX];
+  viewer_mode_t mode;
+  bool gravity_enabled;
+  bool contacts_enabled;
+  bool harsh_sim_enabled;
   int active_slider;
 
   bool button_left;
@@ -67,6 +78,24 @@ static void cursor_to_framebuffer(GLFWwindow *window, double cursor_x, double cu
   *fb_y = ((double)win_h - cursor_y) * (double)fb_h / (double)win_h;
 }
 
+static void apply_physics_options(viewer_app_t *app) {
+  if (!app) {
+    return;
+  }
+
+  if (app->gravity_enabled) {
+    app->model->opt.disableflags &= ~mjDSBL_GRAVITY;
+  } else {
+    app->model->opt.disableflags |= mjDSBL_GRAVITY;
+  }
+
+  if (app->contacts_enabled) {
+    app->model->opt.disableflags &= ~mjDSBL_CONTACT;
+  } else {
+    app->model->opt.disableflags |= mjDSBL_CONTACT;
+  }
+}
+
 static void joint_limits(const viewer_app_t *app, uint8_t joint, double *low, double *high) {
   const int joint_id = app->arm.joint_ids[joint];
   const arm_joint_config_t *cfg = &app->core.config.joints[joint];
@@ -84,36 +113,100 @@ static void joint_limits(const viewer_app_t *app, uint8_t joint, double *low, do
   *high = core_lo < core_hi ? core_hi : core_lo;
 }
 
-static void set_joint_angle(viewer_app_t *app, uint8_t joint, double angle_rad) {
+static double clamp_joint_angle(const viewer_app_t *app, uint8_t joint, double angle_rad) {
   double low = 0.0;
   double high = 0.0;
   joint_limits(app, joint, &low, &high);
+  return clamp_double(angle_rad, low, high);
+}
 
+static void read_core_state(viewer_app_t *app) {
+  mujoco_arm_read_state(
+      app->data, &app->arm, (arm_real_t)app->data->time, (arm_real_t)app->model->opt.timestep, &app->core.state);
+}
+
+static void sync_sliders_from_target(viewer_app_t *app) {
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    app->slider_angle_rad[i] = (double)app->ref.q_ref_rad[i];
+  }
+}
+
+static void sync_target_to_current_pose(viewer_app_t *app) {
+  read_core_state(app);
+  arm_reference_zero(&app->ref, app->core.config.dof);
+  app->ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    app->ref.q_ref_rad[i] = app->core.state.q_rad[i];
+    app->ref.dq_ref_rad_s[i] = (arm_real_t)0;
+  }
+  joint_pvi_reset(&app->pvi);
+  sync_sliders_from_target(app);
+}
+
+static void set_pose_joint_angle(viewer_app_t *app, uint8_t joint, double angle_rad) {
   const arm_joint_config_t *cfg = &app->core.config.joints[joint];
-  const double clamped = clamp_double(angle_rad, low, high);
-  app->joint_angle_rad[joint] = clamped;
+  const double clamped = clamp_joint_angle(app, joint, angle_rad);
+  app->slider_angle_rad[joint] = clamped;
+  app->ref.q_ref_rad[joint] = (arm_real_t)clamped;
+  app->ref.dq_ref_rad_s[joint] = (arm_real_t)0;
+  app->ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   app->data->qpos[app->arm.joint_qpos_addr[joint]] =
       (mjtNum)((double)cfg->q_offset_rad + (double)cfg->sign * clamped);
+}
 
+static void zero_motion(viewer_app_t *app) {
   for (int i = 0; i < app->model->nv; ++i) {
     app->data->qvel[i] = 0.0;
   }
-  mj_forward(app->model, app->data);
+  for (int i = 0; i < app->model->nu; ++i) {
+    app->data->ctrl[i] = 0.0;
+  }
 }
 
-static void reset_manual_pose(viewer_app_t *app) {
-  mj_resetData(app->model, app->data);
-  for (uint8_t i = 0; i < app->core.config.dof; ++i) {
-    set_joint_angle(app, i, 0.0);
+static void apply_pose_edit(viewer_app_t *app) {
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    set_pose_joint_angle(app, i, app->slider_angle_rad[i]);
   }
-  joint_sweep_reset(&app->sweep);
-  app->sweep_running = false;
+  zero_motion(app);
+  mj_forward(app->model, app->data);
+  read_core_state(app);
+}
+
+static void reset_viewer_state(viewer_app_t *app) {
+  mj_resetData(app->model, app->data);
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    app->slider_angle_rad[i] = 0.0;
+    app->ref.q_ref_rad[i] = (arm_real_t)0;
+    app->ref.dq_ref_rad_s[i] = (arm_real_t)0;
+    set_pose_joint_angle(app, i, 0.0);
+  }
+  app->ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  joint_pvi_reset(&app->pvi);
+  armsim_impairment_reset(&app->impairment);
+  zero_motion(app);
+  mj_forward(app->model, app->data);
+  read_core_state(app);
+}
+
+static void set_viewer_mode(viewer_app_t *app, viewer_mode_t mode) {
+  if (app->mode == mode) {
+    return;
+  }
+
+  app->mode = mode;
+  app->active_slider = -1;
+  if (mode == VIEWER_MODE_DYNAMIC) {
+    sync_target_to_current_pose(app);
+    armsim_impairment_reset(&app->impairment);
+  } else {
+    sync_target_to_current_pose(app);
+    apply_pose_edit(app);
+  }
 }
 
 static int slider_hit(const viewer_app_t *app, double fb_x, double fb_y, int fb_h) {
-  (void)app;
-  for (uint8_t i = 0; i < ARM_DEFAULT_DOF; ++i) {
-    const int y = fb_h - 180 - (int)i * ROW_H;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    const int y = fb_h - 282 - (int)i * ROW_H;
     if (fb_x >= SLIDER_X && fb_x <= SLIDER_X + SLIDER_W && fb_y >= y && fb_y <= y + SLIDER_H) {
       return (int)i;
     }
@@ -130,11 +223,67 @@ static void update_slider_from_mouse(viewer_app_t *app, int slider, double fb_x)
   double high = 0.0;
   joint_limits(app, (uint8_t)slider, &low, &high);
   const double t = clamp_double((fb_x - SLIDER_X) / (double)SLIDER_W, 0.0, 1.0);
-  set_joint_angle(app, (uint8_t)slider, low + t * (high - low));
+  const double angle = low + t * (high - low);
+  app->slider_angle_rad[slider] = angle;
+  app->ref.q_ref_rad[slider] = (arm_real_t)angle;
+  app->ref.dq_ref_rad_s[slider] = (arm_real_t)0;
+  app->ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+
+  if (app->mode == VIEWER_MODE_POSE_EDIT) {
+    set_pose_joint_angle(app, (uint8_t)slider, angle);
+    apply_pose_edit(app);
+  }
 }
 
 static bool button_hit(double fb_x, double fb_y, int x, int y, int w, int h) {
   return fb_x >= x && fb_x <= x + w && fb_y >= y && fb_y <= y + h;
+}
+
+static bool handle_panel_click(viewer_app_t *app, double fb_x, double fb_y, int fb_h) {
+  const int y_mode = fb_h - 104;
+  const int y_flags = fb_h - 140;
+  const int y_actions = fb_h - 176;
+  const int y_harsh = fb_h - 212;
+
+  if (button_hit(fb_x, fb_y, 24, y_mode, 140, 28)) {
+    set_viewer_mode(app, VIEWER_MODE_POSE_EDIT);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 176, y_mode, 140, 28)) {
+    set_viewer_mode(app, VIEWER_MODE_DYNAMIC);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 24, y_flags, 140, 28)) {
+    app->gravity_enabled = !app->gravity_enabled;
+    apply_physics_options(app);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 176, y_flags, 140, 28)) {
+    app->contacts_enabled = !app->contacts_enabled;
+    apply_physics_options(app);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 24, y_actions, 140, 28)) {
+    reset_viewer_state(app);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 176, y_actions, 140, 28)) {
+    sync_target_to_current_pose(app);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 24, y_harsh, 292, 28)) {
+    app->harsh_sim_enabled = !app->harsh_sim_enabled;
+    armsim_impairment_reset(&app->impairment);
+    sync_target_to_current_pose(app);
+    return true;
+  }
+
+  app->active_slider = slider_hit(app, fb_x, fb_y, fb_h);
+  if (app->active_slider >= 0) {
+    update_slider_from_mouse(app, app->active_slider, fb_x);
+    return true;
+  }
+  return false;
 }
 
 static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
@@ -155,25 +304,7 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
   cursor_to_framebuffer(window, cursor_x, cursor_y, &fb_x, &fb_y);
 
   if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS && fb_x < PANEL_WIDTH) {
-    const int reset_y = fb_h - 106;
-    const int sweep_y = fb_h - 142;
-    if (button_hit(fb_x, fb_y, 24, reset_y, 132, 28)) {
-      reset_manual_pose(app);
-      return;
-    }
-    if (button_hit(fb_x, fb_y, 168, sweep_y, 132, 28)) {
-      app->sweep_running = !app->sweep_running;
-      if (app->sweep_running) {
-        mj_resetData(app->model, app->data);
-        joint_sweep_reset(&app->sweep);
-      }
-      return;
-    }
-
-    app->active_slider = slider_hit(app, fb_x, fb_y, fb_h);
-    if (app->active_slider >= 0) {
-      app->sweep_running = false;
-      update_slider_from_mouse(app, app->active_slider, fb_x);
+    if (handle_panel_click(app, fb_x, fb_y, fb_h)) {
       return;
     }
   }
@@ -263,13 +394,21 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
   if (key == GLFW_KEY_ESCAPE) {
     glfwSetWindowShouldClose(window, GLFW_TRUE);
   } else if (key == GLFW_KEY_R) {
-    reset_manual_pose(app);
+    reset_viewer_state(app);
   } else if (key == GLFW_KEY_SPACE) {
-    app->sweep_running = !app->sweep_running;
-    if (app->sweep_running) {
-      mj_resetData(app->model, app->data);
-      joint_sweep_reset(&app->sweep);
-    }
+    set_viewer_mode(app, app->mode == VIEWER_MODE_DYNAMIC ? VIEWER_MODE_POSE_EDIT : VIEWER_MODE_DYNAMIC);
+  } else if (key == GLFW_KEY_G) {
+    app->gravity_enabled = !app->gravity_enabled;
+    apply_physics_options(app);
+  } else if (key == GLFW_KEY_C) {
+    app->contacts_enabled = !app->contacts_enabled;
+    apply_physics_options(app);
+  } else if (key == GLFW_KEY_S) {
+    sync_target_to_current_pose(app);
+  } else if (key == GLFW_KEY_H) {
+    app->harsh_sim_enabled = !app->harsh_sim_enabled;
+    armsim_impairment_reset(&app->impairment);
+    sync_target_to_current_pose(app);
   }
 }
 
@@ -287,9 +426,10 @@ static void draw_slider(viewer_app_t *app, const mjrContext *context, int fb_h, 
   double high = 0.0;
   joint_limits(app, joint, &low, &high);
 
-  const int y = fb_h - 180 - (int)joint * ROW_H;
-  const double value = app->joint_angle_rad[joint];
-  const double t = (value - low) / (high - low);
+  const int y = fb_h - 282 - (int)joint * ROW_H;
+  const double value = app->slider_angle_rad[joint];
+  const double denom = high - low;
+  const double t = denom > 0.0 ? clamp_double((value - low) / denom, 0.0, 1.0) : 0.0;
   const int knob_x = SLIDER_X + (int)(t * (double)SLIDER_W) - 5;
 
   char label[80];
@@ -297,8 +437,8 @@ static void draw_slider(viewer_app_t *app, const mjrContext *context, int fb_h, 
   (void)snprintf(label, sizeof(label), "J%u  %.1f deg", (unsigned)(joint + 1u), value * 57.29577951308232);
   (void)snprintf(value_label, sizeof(value_label), "%.0f .. %.0f", low * 57.29577951308232, high * 57.29577951308232);
 
-  const mjrRect label_rect = {SLIDER_X, y + 23, 128, 20};
-  const mjrRect range_rect = {SLIDER_X + 146, y + 23, 100, 20};
+  const mjrRect label_rect = {SLIDER_X, y + 23, 140, 20};
+  const mjrRect range_rect = {SLIDER_X + 154, y + 23, 110, 20};
   const mjrRect bar_rect = {SLIDER_X, y, SLIDER_W, SLIDER_H};
   const mjrRect fill_rect = {SLIDER_X, y, (int)(t * (double)SLIDER_W), SLIDER_H};
   const mjrRect knob_rect = {knob_x, y - 3, 10, SLIDER_H + 6};
@@ -314,20 +454,35 @@ static void draw_panel(viewer_app_t *app, mjrRect viewport) {
   const mjrRect panel = {0, 0, PANEL_WIDTH, viewport.height};
   mjr_rectangle(panel, 0.08f, 0.09f, 0.10f, 0.94f);
 
-  const mjrRect title = {20, viewport.height - 52, 260, 28};
-  mjr_label(title, mjFONT_BIG, "ArmSim Pose", 0.08f, 0.09f, 0.10f, 0.0f, 0.95f, 0.95f, 0.95f, &app->context);
+  const mjrRect title = {20, viewport.height - 52, 280, 28};
+  mjr_label(title, mjFONT_BIG, "ArmSim Viewer", 0.08f, 0.09f, 0.10f, 0.0f, 0.95f, 0.95f, 0.95f, &app->context);
 
-  draw_button(&app->context, 24, viewport.height - 106, 132, 28, "Reset", false);
-  draw_button(&app->context, 168, viewport.height - 142, 132, 28, app->sweep_running ? "Stop sweep" : "Run sweep",
-              app->sweep_running);
+  draw_button(&app->context, 24, viewport.height - 104, 140, 28, "Pose Edit", app->mode == VIEWER_MODE_POSE_EDIT);
+  draw_button(&app->context, 176, viewport.height - 104, 140, 28, "Dynamic", app->mode == VIEWER_MODE_DYNAMIC);
+  draw_button(&app->context, 24, viewport.height - 140, 140, 28, "Gravity", app->gravity_enabled);
+  draw_button(&app->context, 176, viewport.height - 140, 140, 28, "Contacts", app->contacts_enabled);
+  draw_button(&app->context, 24, viewport.height - 176, 140, 28, "Reset", false);
+  draw_button(&app->context, 176, viewport.height - 176, 140, 28, "Sync target", false);
+  draw_button(&app->context, 24, viewport.height - 212, 292, 28, "Harsh Sim", app->harsh_sim_enabled);
 
-  const mjrRect hint = {24, viewport.height - 150, 260, 20};
-  mjr_label(hint, mjFONT_NORMAL, "Drag sliders. Mouse scene: rotate, right-pan, wheel-zoom.", 0.08f, 0.09f, 0.10f, 0.0f,
-            0.66f, 0.69f, 0.72f, &app->context);
+  const mjrRect hint = {24, viewport.height - 238, 310, 20};
+  mjr_label(hint, mjFONT_NORMAL, "Sliders edit pose or PD target. Mouse scene: rotate, pan, zoom.", 0.08f, 0.09f,
+            0.10f, 0.0f, 0.66f, 0.69f, 0.72f, &app->context);
 
-  for (uint8_t i = 0; i < app->core.config.dof; ++i) {
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     draw_slider(app, &app->context, viewport.height, i);
   }
+}
+
+static void configure_pvi_defaults(viewer_app_t *app) {
+  joint_pvi_init(&app->pvi, app->core.config.dof);
+  joint_pvi_set_params(&app->pvi, 0u, (joint_pvi_params_t){25.0, 4.0, 0.0, 0.0, 10.0});
+  joint_pvi_set_params(&app->pvi, 1u, (joint_pvi_params_t){120.0, 18.0, 0.0, 0.0, 40.0});
+  joint_pvi_set_params(&app->pvi, 2u, (joint_pvi_params_t){80.0, 14.0, 0.0, 0.0, 30.0});
+  joint_pvi_set_params(&app->pvi, 3u, (joint_pvi_params_t){8.0, 1.2, 0.0, 0.0, 8.0});
+  joint_pvi_set_params(&app->pvi, 4u, (joint_pvi_params_t){8.0, 1.2, 0.0, 0.0, 8.0});
+  joint_pvi_set_params(&app->pvi, 5u, (joint_pvi_params_t){4.0, 0.8, 0.0, 0.0, 8.0});
+  app->controller = joint_pvi_as_controller(&app->pvi);
 }
 
 int main(int argc, char **argv) {
@@ -350,6 +505,10 @@ int main(int argc, char **argv) {
   viewer_app_t app = {0};
   app.model = model;
   app.data = data;
+  app.mode = VIEWER_MODE_POSE_EDIT;
+  app.gravity_enabled = true;
+  app.contacts_enabled = true;
+  app.harsh_sim_enabled = false;
   arm_config_t config = armsim_default_arm6_config();
   if (arm_init(&app.core, &config) != ARM_OK) {
     fprintf(stderr, "Failed to initialize arm core.\n");
@@ -357,6 +516,7 @@ int main(int argc, char **argv) {
     mj_deleteModel(model);
     return EXIT_FAILURE;
   }
+  arm_reference_zero(&app.ref, app.core.config.dof);
   app.active_slider = -1;
 
   char bind_error[256] = {0};
@@ -366,6 +526,11 @@ int main(int argc, char **argv) {
     mj_deleteModel(model);
     return EXIT_FAILURE;
   }
+  configure_pvi_defaults(&app);
+  armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
+  armsim_impairment_init(&app.impairment, &impairment_config, app.core.config.dof);
+  apply_physics_options(&app);
+  reset_viewer_state(&app);
 
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW.\n");
@@ -405,22 +570,30 @@ int main(int argc, char **argv) {
   app.camera.lookat[1] = 0.0;
   app.camera.lookat[2] = 0.20;
 
-  joint_sweep_init(&app.sweep, app.core.config.dof, (joint_sweep_params_t){1.0, 0.8, 0.5});
-  app.controller = joint_sweep_as_controller(&app.sweep);
-  reset_manual_pose(&app);
-
   while (!glfwWindowShouldClose(window)) {
-    if (app.sweep_running && !app.sweep.complete) {
+    apply_physics_options(&app);
+    if (app.mode == VIEWER_MODE_DYNAMIC) {
       const mjtNum frame_start = data->time;
-      while (data->time - frame_start < 1.0 / 60.0 && !app.sweep.complete) {
-        if (armsim_step_once(model, data, &app.arm, &app.core, &app.controller) != ARM_OK) {
+      while (data->time - frame_start < 1.0 / 60.0) {
+        const int step_status = app.harsh_sim_enabled
+                                    ? armsim_step_once_impaired(
+                                          model,
+                                          data,
+                                          &app.arm,
+                                          &app.core,
+                                          &app.ref,
+                                          &app.controller,
+                                          &app.impairment)
+                                    : armsim_step_once(
+                                          model, data, &app.arm, &app.core, &app.ref, &app.controller);
+        if (step_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;
         }
       }
+      read_core_state(&app);
     } else {
-      app.sweep_running = false;
-      mj_forward(model, data);
+      apply_pose_edit(&app);
     }
 
     int width = 0;

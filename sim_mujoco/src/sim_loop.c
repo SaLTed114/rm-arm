@@ -5,13 +5,14 @@ int armsim_step_once(
     mjData *data,
     const mujoco_arm_t *arm,
     arm_t *core,
+    const arm_reference_t *ref,
     arm_controller_t *controller) {
   if (!model || !data || !arm || !core) {
     return ARM_ERR_NULL;
   }
 
   mujoco_arm_read_state(data, arm, (arm_real_t)data->time, (arm_real_t)model->opt.timestep, &core->state);
-  const int status = arm_control_step(core, controller);
+  const int status = arm_control_step(core, ref, controller);
   if (status != ARM_OK) {
     return status;
   }

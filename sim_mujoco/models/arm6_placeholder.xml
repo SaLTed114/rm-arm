@@ -5,7 +5,7 @@
   <default>
     <joint type="hinge" limited="true" range="-3.14159 3.14159" damping="0.25" armature="0.03" frictionloss="0.02"/>
     <geom type="capsule" size="0.025" density="900" condim="3" friction="0.8 0.02 0.001" rgba="0.65 0.70 0.76 1"/>
-    <motor ctrllimited="true" ctrlrange="-8 8" gear="1"/>
+    <motor ctrllimited="true" gear="1"/>
   </default>
 
   <worldbody>
@@ -61,11 +61,11 @@
   </worldbody>
 
   <actuator>
-    <motor name="motor_1" joint="joint_1"/>
-    <motor name="motor_2" joint="joint_2"/>
-    <motor name="motor_3" joint="joint_3"/>
-    <motor name="motor_4" joint="joint_4"/>
-    <motor name="motor_5" joint="joint_5"/>
-    <motor name="motor_6" joint="joint_6"/>
+    <motor name="motor_1" joint="joint_1" ctrlrange="-10 10"/>
+    <motor name="motor_2" joint="joint_2" ctrlrange="-40 40"/>
+    <motor name="motor_3" joint="joint_3" ctrlrange="-30 30"/>
+    <motor name="motor_4" joint="joint_4" ctrlrange="-8 8"/>
+    <motor name="motor_5" joint="joint_5" ctrlrange="-8 8"/>
+    <motor name="motor_6" joint="joint_6" ctrlrange="-8 8"/>
   </actuator>
 </mujoco>

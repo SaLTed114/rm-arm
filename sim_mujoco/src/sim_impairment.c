@@ -1,0 +1,252 @@
+#include "armsim/sim_impairment.h"
+
+#include "arm_core/arm_math.h"
+#include "armsim/sim_loop.h"
+
+static uint32_t rng_next(uint32_t *state) {
+  uint32_t x = *state;
+  if (x == 0u) {
+    x = 0x6d2b79f5u;
+  }
+  x ^= x << 13;
+  x ^= x >> 17;
+  x ^= x << 5;
+  *state = x;
+  return x;
+}
+
+static arm_real_t rng_uniform_signed(uint32_t *state, arm_real_t amplitude) {
+  if (amplitude <= (arm_real_t)0) {
+    return (arm_real_t)0;
+  }
+  const uint32_t sample = rng_next(state);
+  const arm_real_t unit = (arm_real_t)(sample & 0x00ffffffu) / (arm_real_t)0x00ffffffu;
+  return ((arm_real_t)2 * unit - (arm_real_t)1) * amplitude;
+}
+
+static arm_real_t quantize(arm_real_t value, arm_real_t resolution) {
+  if (resolution <= (arm_real_t)0) {
+    return value;
+  }
+  return (arm_real_t)((int)(value / resolution + (value >= (arm_real_t)0 ? (arm_real_t)0.5 : (arm_real_t)-0.5))) *
+         resolution;
+}
+
+static arm_real_t move_with_rate_limit(arm_real_t current, arm_real_t target, arm_real_t max_delta) {
+  if (max_delta <= (arm_real_t)0) {
+    return target;
+  }
+  return current + arm_clamp(target - current, -max_delta, max_delta);
+}
+
+static arm_real_t first_order_step(arm_real_t current, arm_real_t target, arm_real_t dt_s, arm_real_t tau_s) {
+  if (tau_s <= (arm_real_t)0 || dt_s <= (arm_real_t)0) {
+    return target;
+  }
+  const arm_real_t alpha = arm_clamp(dt_s / (tau_s + dt_s), (arm_real_t)0, (arm_real_t)1);
+  return current + alpha * (target - current);
+}
+
+static void push_state(armsim_impairment_t *impairment, const arm_state_t *state) {
+  impairment->delay_states[impairment->delay_write_index] = *state;
+  impairment->delay_write_index =
+      (uint8_t)((impairment->delay_write_index + 1u) % (ARMSIM_IMPAIRMENT_DELAY_MAX + 1u));
+  if (impairment->delay_count < ARMSIM_IMPAIRMENT_DELAY_MAX + 1u) {
+    ++impairment->delay_count;
+  }
+}
+
+static const arm_state_t *delayed_state(const armsim_impairment_t *impairment) {
+  uint8_t steps = impairment->config.sensor_delay_steps;
+  if (steps > ARMSIM_IMPAIRMENT_DELAY_MAX) {
+    steps = ARMSIM_IMPAIRMENT_DELAY_MAX;
+  }
+  if (steps >= impairment->delay_count) {
+    steps = (uint8_t)(impairment->delay_count - 1u);
+  }
+
+  const uint8_t size = ARMSIM_IMPAIRMENT_DELAY_MAX + 1u;
+  const uint8_t index = (uint8_t)((impairment->delay_write_index + size - 1u - steps) % size);
+  return &impairment->delay_states[index];
+}
+
+static void build_measured_state(
+    armsim_impairment_t *impairment,
+    const arm_state_t *raw,
+    arm_real_t dt_s,
+    arm_state_t *state) {
+  *state = *raw;
+  state->dt_s = dt_s;
+
+  for (uint8_t i = 0u; i < impairment->dof; ++i) {
+    arm_real_t q = quantize(raw->q_rad[i], impairment->config.encoder_resolution_rad);
+    q += rng_uniform_signed(&impairment->rng_state, impairment->config.q_noise_rad);
+    state->q_rad[i] = q;
+
+    arm_real_t dq = raw->dq_rad_s[i];
+    if (impairment->config.use_dq_from_q_diff && impairment->has_last_q && dt_s > (arm_real_t)0) {
+      dq = (q - impairment->last_q_rad[i]) / dt_s;
+    }
+
+    dq += rng_uniform_signed(&impairment->rng_state, impairment->config.dq_noise_rad_s);
+    const arm_real_t alpha = arm_clamp(impairment->config.dq_filter_alpha, (arm_real_t)0, (arm_real_t)1);
+    impairment->filtered_dq_rad_s[i] += alpha * (dq - impairment->filtered_dq_rad_s[i]);
+    state->dq_rad_s[i] = impairment->filtered_dq_rad_s[i];
+    state->tau_est_nm[i] = impairment->applied_tau_nm[i] +
+                           rng_uniform_signed(&impairment->rng_state, impairment->config.tau_est_noise_nm);
+    impairment->last_q_rad[i] = q;
+  }
+
+  state->flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID | ARM_STATE_TAU_EST_VALID;
+  impairment->has_last_q = true;
+}
+
+static bool control_due(armsim_impairment_t *impairment, arm_real_t time_s) {
+  if (!impairment->has_control_time) {
+    impairment->next_control_time_s = time_s;
+    impairment->last_control_time_s = time_s;
+    impairment->has_control_time = true;
+  }
+  return time_s + (arm_real_t)1e-12 >= impairment->next_control_time_s;
+}
+
+static void schedule_next_control(armsim_impairment_t *impairment) {
+  arm_real_t period = impairment->config.control_period_s;
+  if (period <= (arm_real_t)0) {
+    period = (arm_real_t)0.001;
+  }
+  period += rng_uniform_signed(&impairment->rng_state, impairment->config.control_jitter_s);
+  if (period < (arm_real_t)0.0001) {
+    period = (arm_real_t)0.0001;
+  }
+  impairment->next_control_time_s += period;
+}
+
+static void update_actuator_model(
+    mjData *data,
+    const mujoco_arm_t *arm,
+    armsim_impairment_t *impairment,
+    arm_real_t dt_s) {
+  for (uint8_t i = 0u; i < impairment->dof; ++i) {
+    arm_real_t target = impairment->target_tau_nm[i];
+    if (arm_abs(target) < impairment->config.actuator_deadband_nm) {
+      target = (arm_real_t)0;
+    }
+
+    arm_real_t tau = first_order_step(
+        impairment->applied_tau_nm[i], target, dt_s, impairment->config.actuator_tau_time_constant_s);
+    if (impairment->config.actuator_tau_rate_limit_nm_s > (arm_real_t)0 && dt_s > (arm_real_t)0) {
+      tau = move_with_rate_limit(
+          impairment->applied_tau_nm[i], tau, impairment->config.actuator_tau_rate_limit_nm_s * dt_s);
+    }
+
+    const arm_real_t limit = arm->config->joints[i].torque_limit_nm;
+    if (limit > (arm_real_t)0) {
+      tau = arm_clamp(tau, -limit, limit);
+    }
+
+    impairment->applied_tau_nm[i] = tau;
+    data->ctrl[arm->actuator_ids[i]] = (mjtNum)(arm->config->joints[i].sign * tau);
+  }
+}
+
+armsim_impairment_config_t armsim_impairment_default_config(void) {
+  armsim_impairment_config_t config = {0};
+  config.enabled = true;
+  config.control_period_s = (arm_real_t)0.002;
+  config.control_jitter_s = (arm_real_t)0.00025;
+  config.sensor_delay_steps = 2u;
+  config.encoder_resolution_rad = (arm_real_t)0.001;
+  config.q_noise_rad = (arm_real_t)0.00035;
+  config.dq_noise_rad_s = (arm_real_t)0.05;
+  config.tau_est_noise_nm = (arm_real_t)0.08;
+  config.use_dq_from_q_diff = true;
+  config.dq_filter_alpha = (arm_real_t)0.35;
+  config.actuator_tau_time_constant_s = (arm_real_t)0.006;
+  config.actuator_tau_rate_limit_nm_s = (arm_real_t)450.0;
+  config.actuator_deadband_nm = (arm_real_t)0.04;
+  config.random_seed = 0x12345678u;
+  return config;
+}
+
+void armsim_impairment_init(
+    armsim_impairment_t *impairment,
+    const armsim_impairment_config_t *config,
+    uint8_t dof) {
+  if (!impairment) {
+    return;
+  }
+
+  impairment->config = config ? *config : armsim_impairment_default_config();
+  impairment->dof = arm_sanitize_dof(dof);
+  armsim_impairment_reset(impairment);
+}
+
+void armsim_impairment_reset(armsim_impairment_t *impairment) {
+  if (!impairment) {
+    return;
+  }
+
+  impairment->rng_state = impairment->config.random_seed ? impairment->config.random_seed : 0x12345678u;
+  impairment->next_control_time_s = (arm_real_t)0;
+  impairment->last_control_time_s = (arm_real_t)0;
+  impairment->delay_write_index = 0u;
+  impairment->delay_count = 0u;
+  impairment->has_control_time = false;
+  impairment->has_last_q = false;
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    impairment->target_tau_nm[i] = (arm_real_t)0;
+    impairment->applied_tau_nm[i] = (arm_real_t)0;
+    impairment->last_q_rad[i] = (arm_real_t)0;
+    impairment->filtered_dq_rad_s[i] = (arm_real_t)0;
+  }
+  for (uint8_t i = 0u; i < ARMSIM_IMPAIRMENT_DELAY_MAX + 1u; ++i) {
+    arm_state_zero(&impairment->delay_states[i], impairment->dof);
+  }
+}
+
+int armsim_step_once_impaired(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_reference_t *ref,
+    arm_controller_t *controller,
+    armsim_impairment_t *impairment) {
+  if (!impairment || !impairment->config.enabled) {
+    return armsim_step_once(model, data, arm, core, ref, controller);
+  }
+  if (!model || !data || !arm || !core) {
+    return ARM_ERR_NULL;
+  }
+  if (impairment->dof != core->config.dof) {
+    return ARM_ERR_DOF;
+  }
+
+  arm_state_t raw_state;
+  mujoco_arm_read_state(data, arm, (arm_real_t)data->time, (arm_real_t)model->opt.timestep, &raw_state);
+  push_state(impairment, &raw_state);
+
+  const arm_real_t time_s = (arm_real_t)data->time;
+  if (control_due(impairment, time_s)) {
+    const arm_real_t dt_s = impairment->has_control_time ? time_s - impairment->last_control_time_s
+                                                         : impairment->config.control_period_s;
+    const arm_state_t *delayed = delayed_state(impairment);
+    build_measured_state(impairment, delayed, dt_s > (arm_real_t)0 ? dt_s : impairment->config.control_period_s,
+                         &core->state);
+
+    const int status = arm_control_step(core, ref, controller);
+    if (status != ARM_OK) {
+      return status;
+    }
+    for (uint8_t i = 0u; i < impairment->dof; ++i) {
+      impairment->target_tau_nm[i] = core->command.tau_ff_nm[i];
+    }
+    impairment->last_control_time_s = time_s;
+    schedule_next_control(impairment);
+  }
+
+  update_actuator_model(data, arm, impairment, (arm_real_t)model->opt.timestep);
+  mj_step(model, data);
+  return ARM_OK;
+}

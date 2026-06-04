@@ -97,7 +97,7 @@ void mujoco_arm_write_command(
   const uint8_t dof = arm->dof < command->dof ? arm->dof : command->dof;
   for (uint8_t i = 0u; i < dof; ++i) {
     const arm_joint_config_t *joint = &arm->config->joints[i];
-    arm_real_t tau = command->tau_nm[i];
+    arm_real_t tau = command->tau_ff_nm[i];
     if (joint->torque_limit_nm > (arm_real_t)0) {
       tau = arm_clamp(tau, -joint->torque_limit_nm, joint->torque_limit_nm);
     }

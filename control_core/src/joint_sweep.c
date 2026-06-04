@@ -2,7 +2,8 @@
 
 #include "arm_core/arm_math.h"
 
-static int joint_sweep_step(void *ctx, arm_t *arm) {
+static int joint_sweep_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
+  (void)ref;
   joint_sweep_t *sweep = (joint_sweep_t *)ctx;
   if (!sweep || !arm) {
     return ARM_ERR_NULL;
@@ -56,8 +57,8 @@ static int joint_sweep_step(void *ctx, arm_t *arm) {
   }
 
   sweep->active_joint = (tau == (arm_real_t)0) ? -1 : (int16_t)active_joint;
-  command->tau_nm[active_joint] = tau;
-  command->flags |= ARM_COMMAND_TAU_VALID;
+  command->tau_ff_nm[active_joint] = tau;
+  command->flags |= ARM_COMMAND_TAU_FF_VALID;
 
   sweep->elapsed_s += state->dt_s;
   if (sweep->elapsed_s >= total_s) {

@@ -51,6 +51,7 @@ add_library(armsim_mujoco STATIC
   src/csv_logger.c
   src/default_arm_config.c
   src/mujoco_arm.c
+  src/sim_impairment.c
   src/sim_loop.c
 )
 

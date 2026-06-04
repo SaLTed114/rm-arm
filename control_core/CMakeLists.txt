@@ -2,6 +2,7 @@ add_library(arm_control_core STATIC
   src/arm.c
   src/arm_control.c
   src/arm_math.c
+  src/joint_pvi.c
   src/joint_sweep.c
 )
 

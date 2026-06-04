@@ -17,6 +17,7 @@ void arm_clear_command(arm_t *arm);
 void arm_limit_command(arm_t *arm);
 
 void arm_state_zero(arm_state_t *state, uint8_t dof);
+void arm_reference_zero(arm_reference_t *ref, uint8_t dof);
 void arm_command_zero(arm_command_t *command, uint8_t dof);
 void arm_command_apply_limits(const arm_config_t *config, arm_command_t *command);
 

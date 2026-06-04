@@ -66,7 +66,7 @@ bool csv_logger_write_header(csv_logger_t *logger) {
     fprintf(logger->file, ",dq%u", (unsigned)(i + 1u));
   }
   for (uint8_t i = 0u; i < logger->dof; ++i) {
-    fprintf(logger->file, ",cmd_tau%u", (unsigned)(i + 1u));
+    fprintf(logger->file, ",cmd_tau_ff%u", (unsigned)(i + 1u));
   }
   for (uint8_t i = 0u; i < logger->dof; ++i) {
     fprintf(logger->file, ",mj_ctrl%u", (unsigned)(i + 1u));
@@ -93,7 +93,7 @@ bool csv_logger_write_step(
     fprintf(logger->file, ",%.9f", (double)state->dq_rad_s[i]);
   }
   for (uint8_t i = 0u; i < logger->dof; ++i) {
-    fprintf(logger->file, ",%.9f", (double)command->tau_nm[i]);
+    fprintf(logger->file, ",%.9f", (double)command->tau_ff_nm[i]);
   }
   for (uint8_t i = 0u; i < logger->dof; ++i) {
     fprintf(logger->file, ",%.9f", (double)mj_ctrl[i]);

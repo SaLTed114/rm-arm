@@ -90,10 +90,29 @@ void arm_command_zero(arm_command_t *command, uint8_t dof) {
   }
 
   command->dof = arm_sanitize_dof(dof);
-  command->flags = ARM_COMMAND_TAU_VALID;
+  command->flags = 0u;
 
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
-    command->tau_nm[i] = (arm_real_t)0;
+    command->q_d_rad[i] = (arm_real_t)0;
+    command->dq_d_rad_s[i] = (arm_real_t)0;
+    command->kp[i] = (arm_real_t)0;
+    command->kd[i] = (arm_real_t)0;
+    command->tau_ff_nm[i] = (arm_real_t)0;
+  }
+}
+
+void arm_reference_zero(arm_reference_t *ref, uint8_t dof) {
+  if (!ref) {
+    return;
+  }
+
+  ref->dof = arm_sanitize_dof(dof);
+  ref->flags = 0u;
+
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    ref->q_ref_rad[i] = (arm_real_t)0;
+    ref->dq_ref_rad_s[i] = (arm_real_t)0;
+    ref->tau_ff_nm[i] = (arm_real_t)0;
   }
 }
 
@@ -106,7 +125,7 @@ void arm_command_apply_limits(const arm_config_t *config, arm_command_t *command
   for (uint8_t i = 0u; i < dof; ++i) {
     const arm_real_t limit = config->joints[i].torque_limit_nm;
     if (limit > (arm_real_t)0) {
-      command->tau_nm[i] = arm_clamp(command->tau_nm[i], -limit, limit);
+      command->tau_ff_nm[i] = arm_clamp(command->tau_ff_nm[i], -limit, limit);
     }
   }
 }

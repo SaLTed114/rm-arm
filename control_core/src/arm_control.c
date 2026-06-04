@@ -1,6 +1,6 @@
 #include "arm_core/arm_control.h"
 
-int arm_control_step(arm_t *arm, arm_controller_t *controller) {
+int arm_control_step(arm_t *arm, const arm_reference_t *ref, arm_controller_t *controller) {
   if (!arm) {
     return ARM_ERR_NULL;
   }
@@ -16,11 +16,14 @@ int arm_control_step(arm_t *arm, arm_controller_t *controller) {
   if (state->dof != config->dof) {
     return ARM_ERR_DOF;
   }
+  if (ref && ref->dof != config->dof) {
+    return ARM_ERR_DOF;
+  }
 
   arm_clear_command(arm);
 
   if (controller && controller->vt && controller->vt->step) {
-    const int status = controller->vt->step(controller->ctx, arm);
+    const int status = controller->vt->step(controller->ctx, arm, ref);
     if (status != ARM_OK) {
       arm_clear_command(arm);
       return status;
@@ -28,7 +31,6 @@ int arm_control_step(arm_t *arm, arm_controller_t *controller) {
   }
 
   command->dof = config->dof;
-  command->flags |= ARM_COMMAND_TAU_VALID;
   arm_limit_command(arm);
   return ARM_OK;
 }
