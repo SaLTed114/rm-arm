@@ -2,15 +2,16 @@
 
 #include "arm_core/arm_math.h"
 
-static int joint_sweep_step(
-    void *ctx,
-    const arm_config_t *config,
-    const arm_state_t *state,
-    arm_command_t *command) {
+static int joint_sweep_step(void *ctx, arm_t *arm) {
   joint_sweep_t *sweep = (joint_sweep_t *)ctx;
-  if (!sweep || !config || !state || !command) {
+  if (!sweep || !arm) {
     return ARM_ERR_NULL;
   }
+
+  const arm_config_t *config = &arm->config;
+  const arm_state_t *state = &arm->state;
+  arm_command_t *command = &arm->command;
+
   if (sweep->dof == 0u || sweep->dof > ARM_DOF_MAX || sweep->dof != config->dof) {
     return ARM_ERR_DOF;
   }

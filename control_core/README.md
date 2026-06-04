@@ -8,8 +8,8 @@ Rules for this directory:
 - No MuJoCo, GLFW, HAL, FreeRTOS, stdio, or filesystem dependencies.
 - No dynamic allocation.
 - Public headers live under `include/arm_core/`.
-- Platform code should call `arm_control_step()` with an `arm_state_t` and read
-  torque commands from `arm_command_t`.
+- Platform code should keep one `arm_t`, update `arm.state` each control tick,
+  call `arm_control_step()`, and read torque commands from `arm.command`.
 
 The active robot DOF is runtime-configured through `arm_config_t.dof`, with
 fixed arrays sized by `ARM_DOF_MAX`.

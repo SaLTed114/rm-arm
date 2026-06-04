@@ -107,10 +107,22 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  model->opt.gravity[0] = 0.0;
+  model->opt.gravity[1] = 0.0;
+  model->opt.gravity[2] = 0.0;
+
   arm_config_t config = armsim_default_arm6_config();
+  arm_t core;
+  if (arm_init(&core, &config) != ARM_OK) {
+    fprintf(stderr, "Failed to initialize arm core.\n");
+    mj_deleteData(data);
+    mj_deleteModel(model);
+    return EXIT_FAILURE;
+  }
+
   mujoco_arm_t arm;
   char bind_error[256] = {0};
-  if (mujoco_arm_bind(model, &config, &arm, bind_error, sizeof(bind_error)) != ARM_OK) {
+  if (mujoco_arm_bind(model, &core.config, &arm, bind_error, sizeof(bind_error)) != ARM_OK) {
     fprintf(stderr, "Failed to bind arm: %s\n", bind_error);
     mj_deleteData(data);
     mj_deleteModel(model);
@@ -118,11 +130,11 @@ int main(int argc, char **argv) {
   }
 
   joint_sweep_t sweep;
-  joint_sweep_init(&sweep, config.dof, (joint_sweep_params_t){1.0, 0.35, 0.25});
+  joint_sweep_init(&sweep, core.config.dof, (joint_sweep_params_t){1.0, 0.35, 0.25});
   arm_controller_t controller = joint_sweep_as_controller(&sweep);
 
   csv_logger_t logger;
-  if (!csv_logger_open(&logger, log_path, config.dof) || !csv_logger_write_header(&logger)) {
+  if (!csv_logger_open(&logger, log_path, core.config.dof) || !csv_logger_write_header(&logger)) {
     fprintf(stderr, "Failed to open CSV log '%s'.\n", log_path);
     mj_deleteData(data);
     mj_deleteModel(model);
@@ -132,13 +144,11 @@ int main(int argc, char **argv) {
   verify_stats_t stats;
   memset(&stats, 0, sizeof(stats));
 
-  arm_state_t state;
-  arm_command_t command;
   arm_real_t mj_ctrl[ARM_DOF_MAX] = {0};
   const arm_real_t duration_s = joint_sweep_total_duration(&sweep) + 0.1;
 
   while ((arm_real_t)data->time < duration_s && !sweep.complete) {
-    const int step_status = armsim_step_once(model, data, &arm, &config, &controller, &state, &command);
+    const int step_status = armsim_step_once(model, data, &arm, &core, &controller);
     if (step_status != ARM_OK) {
       fprintf(stderr, "Simulation step failed: %d\n", step_status);
       csv_logger_close(&logger);
@@ -148,12 +158,12 @@ int main(int argc, char **argv) {
     }
 
     collect_mj_ctrl(data, &arm, mj_ctrl);
-    update_stats(&stats, &arm, &command, &state, mj_ctrl, &sweep);
-    (void)csv_logger_write_step(&logger, &state, &command, mj_ctrl, sweep.active_joint);
+    update_stats(&stats, &arm, &core.command, &core.state, mj_ctrl, &sweep);
+    (void)csv_logger_write_step(&logger, &core.state, &core.command, mj_ctrl, sweep.active_joint);
   }
 
   csv_logger_close(&logger);
-  const int result = summarize_stats(&stats, config.dof);
+  const int result = summarize_stats(&stats, core.config.dof);
 
   mj_deleteData(data);
   mj_deleteModel(model);

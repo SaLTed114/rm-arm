@@ -10,9 +10,7 @@ int armsim_step_once(
     mjModel *model,
     mjData *data,
     const mujoco_arm_t *arm,
-    const arm_config_t *config,
-    arm_controller_t *controller,
-    arm_state_t *state,
-    arm_command_t *command);
+    arm_t *core,
+    arm_controller_t *controller);
 
 #endif

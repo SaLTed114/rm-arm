@@ -20,24 +20,23 @@ int main(void) {
   arm_config_t config = make_test_config();
   assert(arm_config_validate(&config) == ARM_OK);
 
-  arm_state_t state;
-  arm_state_zero(&state, config.dof);
-  state.dt_s = 0.001;
-  state.flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID;
+  arm_t arm;
+  assert(arm_init(&arm, &config) == ARM_OK);
+  arm.state.dt_s = 0.001;
+  arm.state.flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID;
 
   joint_sweep_t sweep;
-  joint_sweep_init(&sweep, config.dof, (joint_sweep_params_t){2.0, 0.1, 0.1});
+  joint_sweep_init(&sweep, arm.config.dof, (joint_sweep_params_t){2.0, 0.1, 0.1});
   arm_controller_t controller = joint_sweep_as_controller(&sweep);
 
-  arm_command_t command;
-  assert(arm_control_step(&config, &controller, &state, &command) == ARM_OK);
-  assert(command.dof == config.dof);
-  assert(command.tau_nm[0] == 1.5);
-  assert(command.tau_nm[1] == 0.0);
+  assert(arm_control_step(&arm, &controller) == ARM_OK);
+  assert(arm.command.dof == arm.config.dof);
+  assert(arm.command.tau_nm[0] == 1.5);
+  assert(arm.command.tau_nm[1] == 0.0);
 
-  arm_command_zero(&command, config.dof);
-  assert(command.flags == ARM_COMMAND_TAU_VALID);
-  assert(command.tau_nm[0] == 0.0);
+  arm_clear_command(&arm);
+  assert(arm.command.flags == ARM_COMMAND_TAU_VALID);
+  assert(arm.command.tau_nm[0] == 0.0);
 
   return 0;
 }

@@ -1,44 +1,56 @@
 <mujoco model="arm6_placeholder">
   <compiler angle="radian" inertiafromgeom="true"/>
-  <option timestep="0.001" integrator="RK4" gravity="0 0 0"/>
+  <option timestep="0.001" integrator="RK4" gravity="0 0 -9.81"/>
 
   <default>
-    <joint type="hinge" limited="true" range="-3.14159 3.14159" damping="0.12" armature="0.02"/>
-    <geom type="capsule" size="0.025" density="900" rgba="0.65 0.70 0.76 1"/>
-    <motor ctrllimited="true" ctrlrange="-5 5" gear="1"/>
+    <joint type="hinge" limited="true" range="-3.14159 3.14159" damping="0.25" armature="0.03" frictionloss="0.02"/>
+    <geom type="capsule" size="0.025" density="900" condim="3" friction="0.8 0.02 0.001" rgba="0.65 0.70 0.76 1"/>
+    <motor ctrllimited="true" ctrlrange="-8 8" gear="1"/>
   </default>
 
   <worldbody>
-    <light name="key" pos="0 -1 1.5" dir="0 1 -1"/>
-    <geom name="floor" type="plane" pos="0 0 -0.02" size="1.2 1.2 0.02" rgba="0.18 0.19 0.20 1"/>
+    <light name="key" pos="0 -1.2 1.8" dir="0 1 -1"/>
+    <geom name="floor" type="plane" pos="0 0 -0.02" size="1.2 1.2 0.02" condim="3" friction="0.9 0.02 0.001" rgba="0.18 0.19 0.20 1"/>
 
     <body name="base" pos="0 0 0">
-      <geom name="base_geom" type="cylinder" size="0.08 0.04" rgba="0.20 0.22 0.25 1"/>
+      <geom name="base_plate" type="cylinder" size="0.12 0.035" mass="1.6" rgba="0.20 0.22 0.25 1"/>
 
-      <body name="link_1" pos="0 0 0.05">
+      <body name="yaw_column" pos="0 0 0.04">
         <joint name="joint_1" axis="0 0 1"/>
-        <geom name="link_1_geom" fromto="0 0 0 0 0 0.20"/>
+        <geom name="yaw_column_geom" type="cylinder" size="0.065 0.09" pos="0 0 0.09" mass="1.2" rgba="0.28 0.31 0.35 1"/>
+        <geom name="shoulder_shell" type="sphere" size="0.085" pos="0 0 0.18" mass="0.8" rgba="0.30 0.34 0.39 1"/>
 
-        <body name="link_2" pos="0 0 0.20">
-          <joint name="joint_2" axis="0 1 0"/>
-          <geom name="link_2_geom" fromto="0 0 0 0.18 0 0"/>
+        <body name="upper_arm" pos="0 0 0.18">
+          <joint name="joint_2" axis="0 1 0" range="-2.6 2.6"/>
+          <geom name="shoulder_axis" type="cylinder" fromto="0 -0.10 0 0 0.10 0" size="0.035" mass="0.35" rgba="0.38 0.42 0.48 1"/>
+          <geom name="upper_arm_geom" fromto="0 0 0 0.34 0 0" size="0.045" mass="3.2" rgba="0.63 0.68 0.74 1"/>
 
-          <body name="link_3" pos="0.18 0 0">
-            <joint name="joint_3" axis="0 1 0"/>
-            <geom name="link_3_geom" fromto="0 0 0 0.16 0 0"/>
+          <body name="forearm" pos="0.34 0 0">
+            <joint name="joint_3" axis="0 1 0" range="-2.8 2.8"/>
+            <geom name="elbow_shell" type="sphere" size="0.065" mass="0.55" rgba="0.36 0.40 0.46 1"/>
+            <geom name="elbow_axis" type="cylinder" fromto="0 -0.08 0 0 0.08 0" size="0.028" mass="0.25" rgba="0.38 0.42 0.48 1"/>
+            <geom name="forearm_geom" fromto="0 0 0 0.28 0 0" size="0.038" mass="2.4" rgba="0.66 0.71 0.77 1"/>
 
-            <body name="link_4" pos="0.16 0 0">
+            <body name="wrist_roll_1" pos="0.28 0 0">
               <joint name="joint_4" axis="1 0 0"/>
-              <geom name="link_4_geom" fromto="0 0 0 0.12 0 0"/>
+              <geom name="wrist_roll_1_geom" fromto="0 0 0 0.075 0 0" size="0.026" mass="0.35" rgba="0.45 0.49 0.54 1"/>
 
-              <body name="link_5" pos="0.12 0 0">
+              <body name="wrist_pitch" pos="0.075 0 0">
                 <joint name="joint_5" axis="0 1 0"/>
-                <geom name="link_5_geom" fromto="0 0 0 0.09 0 0"/>
+                <geom name="wrist_pitch_shell" type="sphere" size="0.040" mass="0.25" rgba="0.46 0.50 0.56 1"/>
+                <geom name="wrist_pitch_axis" type="cylinder" fromto="0 -0.055 0 0 0.055 0" size="0.020" mass="0.12" rgba="0.38 0.42 0.48 1"/>
+                <geom name="wrist_pitch_link" fromto="0 0 0 0.065 0 0" size="0.022" mass="0.22" rgba="0.56 0.60 0.65 1"/>
 
-                <body name="link_6" pos="0.09 0 0">
+                <body name="wrist_roll_2" pos="0.065 0 0">
                   <joint name="joint_6" axis="1 0 0"/>
-                  <geom name="link_6_geom" fromto="0 0 0 0.06 0 0" rgba="0.85 0.55 0.24 1"/>
-                  <site name="tool0" pos="0.07 0 0" size="0.015" rgba="0.95 0.95 0.95 1"/>
+                  <geom name="wrist_roll_2_geom" fromto="0 0 0 0.055 0 0" size="0.020" mass="0.18" rgba="0.85 0.55 0.24 1"/>
+                  <geom name="gripper_mount" type="cylinder" fromto="0.050 0 0 0.078 0 0" size="0.030" mass="0.12" rgba="0.70 0.72 0.74 1"/>
+                  <geom name="gripper_palm" type="box" pos="0.088 0 0" size="0.016 0.050 0.030" mass="0.18" rgba="0.86 0.56 0.25 1"/>
+                  <geom name="gripper_left_finger" type="box" pos="0.138 0.035 0" size="0.044 0.010 0.012" mass="0.055" rgba="0.93 0.68 0.32 1"/>
+                  <geom name="gripper_right_finger" type="box" pos="0.138 -0.035 0" size="0.044 0.010 0.012" mass="0.055" rgba="0.93 0.68 0.32 1"/>
+                  <geom name="gripper_left_tip" type="box" pos="0.176 0.026 0" size="0.010 0.020 0.011" mass="0.025" rgba="0.80 0.46 0.20 1"/>
+                  <geom name="gripper_right_tip" type="box" pos="0.176 -0.026 0" size="0.010 0.020 0.011" mass="0.025" rgba="0.80 0.46 0.20 1"/>
+                  <site name="tool0" pos="0.190 0 0" size="0.003" rgba="0.95 0.95 0.95 0"/>
                 </body>
               </body>
             </body>
