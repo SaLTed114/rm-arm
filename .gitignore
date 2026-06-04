@@ -1,0 +1,10 @@
+build/
+reference/
+logs/
+third_party/mujoco/
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.a
