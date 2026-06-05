@@ -30,6 +30,8 @@ Rules for this directory:
   They run in parallel with the feedback controller and add model-based torque
   into the final command before command limiting. `joint_gravity_ff` is the
   current config-driven gravity compensation module.
+- `joint_kinematics` provides lightweight FK, position Jacobian, and
+  position-only IK for reusable Cartesian target generation.
 - `arm_safety` is a final command-side guard for invalid state, torque limits,
   soft position limits, and overspeed protection.
 - Control performance metrics and log analysis live in PC-side `tools/`.

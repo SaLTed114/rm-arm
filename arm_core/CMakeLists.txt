@@ -6,6 +6,7 @@ add_library(arm_core STATIC
   src/controllers/joint_sweep.c
   src/estimation/joint_state_filter.c
   src/feedforward/joint_gravity_ff.c
+  src/kinematics/joint_kinematics.c
   src/reference/joint_ref_shaper.c
   src/safety/arm_safety.c
 )

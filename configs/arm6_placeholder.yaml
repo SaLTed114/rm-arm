@@ -26,8 +26,8 @@ control:
     - { kp: 3.0, kd: 0.5, out_limit: 2.0 }
 
   reference:
-    dq_limits_rad_s: [1.4, 0.8, 1.0, 3.0, 3.0, 3.8]
-    ddq_limits_rad_s2: [4.5, 2.4, 3.2, 16.0, 16.0, 22.0]
+    dq_limits_rad_s: [0.8, 0.6, 0.8, 2.0, 3.0, 3.8]
+    ddq_limits_rad_s2: [2.5, 1.8, 2.4, 10.0, 16.0, 22.0]
 
   state_filter:
     - { q_time_constant_s: 0.0, dq_time_constant_s: 0.012, use_dq_from_q_diff: false }

@@ -220,6 +220,45 @@ def gravity_bodies(config: dict[str, Any]) -> list[dict[str, Any]]:
     return bodies
 
 
+def kinematics_bodies(config: dict[str, Any], tool_site: str) -> tuple[list[dict[str, Any]], int, list[float]]:
+    joint_indices = {joint["name"]: index for index, joint in enumerate(config["joints"])}
+    joints = joint_lookup(config)
+    bodies: list[dict[str, Any]] = []
+    tool_body = -1
+    tool_pos = [0.0, 0.0, 0.0]
+
+    def visit(body: dict[str, Any], parent: int) -> None:
+        nonlocal tool_body, tool_pos
+        index = len(bodies)
+        joint_name = body.get("joint")
+        joint_index = joint_indices[joint_name] if joint_name else -1
+        axis = joints[joint_name]["axis"] if joint_name else [0, 0, 0]
+        q_min = joints[joint_name]["q_min_rad"] if joint_name else 0.0
+        q_max = joints[joint_name]["q_max_rad"] if joint_name else 0.0
+        bodies.append(
+            {
+                "parent": parent,
+                "joint": joint_index,
+                "pos": body["pos"],
+                "axis": axis,
+                "q_min": q_min,
+                "q_max": q_max,
+            }
+        )
+        for site in body.get("sites", []):
+            if site.get("name") == tool_site:
+                tool_body = index
+                tool_pos = vec3(site.get("pos"))
+        for child in body.get("bodies", []):
+            visit(child, index)
+
+    for root_body in config["mujoco"]["worldbody"].get("bodies", []):
+        visit(root_body, -1)
+    if tool_body < 0:
+        raise SystemExit(f"tool site {tool_site!r} was not found")
+    return bodies, tool_body, tool_pos
+
+
 def c_body_index(value: int, none_macro: str) -> str:
     return none_macro if value < 0 else f"{value}"
 
@@ -234,6 +273,7 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
         "#define ARMSIM_ARM6_SIM_CONFIG_H_",
         "",
         '#include "arm_core/joint_gravity_ff.h"',
+        '#include "arm_core/joint_kinematics.h"',
         '#include "arm_core/arm_types.h"',
         "",
         "#define ARMSIM_ARM6_TORQUE_LIMITS_NM \\",
@@ -307,6 +347,40 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
     for index, row in enumerate(body_rows):
         suffix = " \\" if index != len(body_rows) - 1 else " \\"
         comma = "," if index != len(body_rows) - 1 else ""
+        lines.append(f"{row}{comma}{suffix}")
+    kinematics, tool_body, tool_pos = kinematics_bodies(config, "tool0")
+    kin_rows = []
+    for body in kinematics:
+        row = (
+            "    { "
+            + ", ".join(
+                [
+                    c_body_index(body["parent"], "JOINT_KINEMATICS_NO_BODY"),
+                    c_body_index(body["joint"], "JOINT_KINEMATICS_NO_JOINT"),
+                    c_array(body["pos"]),
+                    c_array(body["axis"]),
+                    c_real(body["q_min"]),
+                    c_real(body["q_max"]),
+                ]
+            )
+            + " }"
+        )
+        kin_rows.append(row)
+    lines.extend([
+        "    } \\",
+        "  }",
+        "",
+        "#define ARMSIM_ARM6_KINEMATICS_PARAMS \\",
+        "  { \\",
+        "    ARM_DEFAULT_DOF, \\",
+        f"    {len(kin_rows)}u, \\",
+        f"    {tool_body}, \\",
+        f"    {c_array(tool_pos)}, \\",
+        "    { \\",
+    ])
+    for index, row in enumerate(kin_rows):
+        suffix = " \\" if index != len(kin_rows) - 1 else " \\"
+        comma = "," if index != len(kin_rows) - 1 else ""
         lines.append(f"{row}{comma}{suffix}")
     lines.extend([
         "    } \\",

@@ -70,9 +70,16 @@ CMake will skip the unavailable simulation targets with a warning.
 
 - `armsim_verify_joints`: headless joint torque I/O verification, writes `logs/joint_verify.csv`.
 - `armsim_control_benchmark`: headless harsh-sim control benchmark, writes logs such as `logs/control_benchmark_hold_zero_harsh.csv`.
-- `armsim_viewer`: MuJoCo viewer for visual joint direction checks.
+- `armsim_viewer`: MuJoCo viewer for visual joint direction checks, joint target editing, and Dynamic-mode `Tool Drag` end-effector position dragging.
 
 The default model is `sim_mujoco/models/arm6_placeholder.xml`.
+
+In `armsim_viewer`, enable `Tool Drag` with the panel button or `T`, switch to
+`Dynamic`, choose `X`, `Y`, or `Z` in the panel or with the matching key, then
+left-drag in the scene to move the `tool0` target along that world axis. The
+drag target keeps the `tool0` orientation captured at mouse press. Releasing the
+mouse syncs the target back to the current joint pose so the arm holds
+immediately instead of continuing toward a stale Cartesian target.
 
 ## Control Metrics
 
