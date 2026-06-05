@@ -239,16 +239,16 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
         "#define ARMSIM_ARM6_TORQUE_LIMITS_NM \\",
         f"  {c_array(torque_limits)}",
         "",
-        "#define ARMSIM_ARM6_PVI_PARAMS \\",
+        "#define ARMSIM_ARM6_PD_PARAMS \\",
         "  { \\",
     ]
-    pvi_rows = []
-    for params in control["pvi"]:
-        values = [params["kp"], params["kv"], params["ki"], params["integral_limit"], params["out_limit"]]
-        pvi_rows.append(f"    {c_array(values)}")
-    for index, row in enumerate(pvi_rows):
-        suffix = " \\" if index != len(pvi_rows) - 1 else " \\"
-        comma = "," if index != len(pvi_rows) - 1 else ""
+    pd_rows = []
+    for params in control["pd"]:
+        values = [params["kp"], params["kd"], params["out_limit"]]
+        pd_rows.append(f"    {c_array(values)}")
+    for index, row in enumerate(pd_rows):
+        suffix = " \\" if index != len(pd_rows) - 1 else " \\"
+        comma = "," if index != len(pd_rows) - 1 else ""
         lines.append(f"{row}{comma}{suffix}")
     lines.extend([
         "  }",

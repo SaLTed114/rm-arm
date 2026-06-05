@@ -9,8 +9,9 @@
 #include "arm_core/joint_gravity_ff.h"
 #include "arm_core/joint_ref_shaper.h"
 #include "arm_core/joint_state_filter.h"
-#include "arm_core/joint_pvi.h"
+#include "arm_core/joint_pd.h"
 #include "armsim/arm6_sim_config.h"
+#include "armsim/control_log.h"
 #include "armsim/default_arm_config.h"
 #include "armsim/mujoco_arm.h"
 #include "armsim/sim_impairment.h"
@@ -44,12 +45,12 @@ typedef struct {
   joint_state_filter_t state_filter;
   arm_state_t measured_state;
   arm_safety_t safety;
-  joint_pvi_t pvi;
+  joint_pd_t pd;
   arm_controller_t controller;
   joint_gravity_ff_t gravity_ff;
   arm_feedforward_t feedforward;
   armsim_impairment_t impairment;
-  FILE *debug_log;
+  control_log_t debug_log;
 
   double slider_angle_rad[ARM_DOF_MAX];
   viewer_mode_t mode;
@@ -139,66 +140,48 @@ static void read_core_state(viewer_app_t *app) {
       app->data, &app->arm, ARM_REAL(app->data->time), ARM_REAL(app->model->opt.timestep), &app->core.state);
 }
 
-static void write_joint_columns(FILE *file, const char *prefix, const arm_real_t values[ARM_DOF_MAX], uint8_t dof) {
-  for (uint8_t i = 0u; i < dof; ++i) {
-    (void)fprintf(file, ",%s%u", prefix, (unsigned)(i + 1u));
+static void compute_gravity_ff_log(const viewer_app_t *app, arm_real_t tau_ff_gravity[ARM_DOF_MAX]) {
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    tau_ff_gravity[i] = ARM_REAL_ZERO;
   }
-  (void)values;
-}
+  if (!app->gravity_enabled || !app->gravity_ff_enabled) return;
 
-static void write_joint_values(FILE *file, const arm_real_t values[ARM_DOF_MAX], uint8_t dof) {
-  for (uint8_t i = 0u; i < dof; ++i) {
-    (void)fprintf(file, ",%.9f", (double)values[i]);
+  arm_t ff_arm = app->core;
+  arm_feedforward_t ff = app->feedforward;
+  if (arm_control_step_with_feedforward(&ff_arm, &app->control_ref, NULL, &ff) != ARM_OK) return;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    tau_ff_gravity[i] = ff_arm.command.tau_ff_nm[i];
   }
 }
 
 static void debug_log_open(viewer_app_t *app) {
-  app->debug_log = fopen("logs/dynamic_debug.csv", "w");
-  if (!app->debug_log) {
-    return;
-  }
-
-  const uint8_t dof = app->core.config.dof;
-  (void)fprintf(app->debug_log, "time_s,harsh");
-  write_joint_columns(app->debug_log, "q_meas", app->measured_state.q_rad, dof);
-  write_joint_columns(app->debug_log, "dq_meas", app->measured_state.dq_rad_s, dof);
-  write_joint_columns(app->debug_log, "q_filt", app->core.state.q_rad, dof);
-  write_joint_columns(app->debug_log, "dq_filt", app->core.state.dq_rad_s, dof);
-  write_joint_columns(app->debug_log, "q_ref", app->control_ref.q_ref_rad, dof);
-  write_joint_columns(app->debug_log, "dq_ref", app->control_ref.dq_ref_rad_s, dof);
-  write_joint_columns(app->debug_log, "tau_cmd", app->core.command.tau_ff_nm, dof);
-  for (uint8_t i = 0u; i < dof; ++i) {
-    (void)fprintf(app->debug_log, ",mj_ctrl%u", (unsigned)(i + 1u));
-  }
-  (void)fprintf(app->debug_log, "\n");
+  (void)control_log_open(&app->debug_log, "logs/dynamic_debug.csv", app->core.config.dof);
 }
 
 static void debug_log_step(viewer_app_t *app) {
-  if (!app->debug_log) {
-    return;
-  }
+  arm_real_t tau_ff_gravity[ARM_DOF_MAX];
+  compute_gravity_ff_log(app, tau_ff_gravity);
 
-  const uint8_t dof = app->core.config.dof;
-  (void)fprintf(app->debug_log, "%.9f,%u", (double)app->data->time, app->harsh_sim_enabled ? 1u : 0u);
-  write_joint_values(app->debug_log, app->measured_state.q_rad, dof);
-  write_joint_values(app->debug_log, app->measured_state.dq_rad_s, dof);
-  write_joint_values(app->debug_log, app->core.state.q_rad, dof);
-  write_joint_values(app->debug_log, app->core.state.dq_rad_s, dof);
-  write_joint_values(app->debug_log, app->control_ref.q_ref_rad, dof);
-  write_joint_values(app->debug_log, app->control_ref.dq_ref_rad_s, dof);
-  write_joint_values(app->debug_log, app->core.command.tau_ff_nm, dof);
-  for (uint8_t i = 0u; i < dof; ++i) {
-    (void)fprintf(app->debug_log, ",%.9f", (double)app->data->ctrl[app->arm.actuator_ids[i]]);
-  }
-  (void)fprintf(app->debug_log, "\n");
+  const control_log_flags_t flags = {
+      app->gravity_enabled,
+      app->gravity_ff_enabled,
+      app->contacts_enabled,
+      app->harsh_sim_enabled,
+  };
+  (void)control_log_write_step(
+      &app->debug_log,
+      app->data,
+      &app->arm,
+      &flags,
+      &app->measured_state,
+      &app->core.state,
+      &app->control_ref,
+      tau_ff_gravity,
+      &app->core.command);
 }
 
 static void debug_log_close(viewer_app_t *app) {
-  if (!app->debug_log) {
-    return;
-  }
-  fclose(app->debug_log);
-  app->debug_log = NULL;
+  control_log_close(&app->debug_log);
 }
 
 static int read_filtered_core_state(viewer_app_t *app) {
@@ -224,7 +207,7 @@ static void sync_target_to_current_pose(viewer_app_t *app) {
   joint_ref_shaper_reset_to_state(&app->shaper, &app->core.state);
   joint_state_filter_reset_to_state(&app->state_filter, &app->core.state);
   (void)joint_ref_shaper_step(&app->shaper, &app->core.state, &app->manual_goal_ref, &app->control_ref);
-  joint_pvi_reset(&app->pvi);
+  joint_pd_reset(&app->pd);
   sync_sliders_from_target(app);
 }
 
@@ -266,7 +249,7 @@ static void reset_viewer_state(viewer_app_t *app) {
     set_pose_joint_angle(app, i, 0.0);
   }
   app->manual_goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
-  joint_pvi_reset(&app->pvi);
+  joint_pd_reset(&app->pd);
   armsim_impairment_reset(&app->impairment);
   zero_motion(app);
   mj_forward(app->model, app->data);
@@ -572,14 +555,14 @@ static void draw_panel(viewer_app_t *app, mjrRect viewport) {
   }
 }
 
-static void configure_pvi_defaults(viewer_app_t *app) {
-  static const joint_pvi_params_t pvi_params[ARM_DEFAULT_DOF] = ARMSIM_ARM6_PVI_PARAMS;
+static void configure_pd_defaults(viewer_app_t *app) {
+  static const joint_pd_params_t pd_params[ARM_DEFAULT_DOF] = ARMSIM_ARM6_PD_PARAMS;
 
-  joint_pvi_init(&app->pvi, app->core.config.dof);
+  joint_pd_init(&app->pd, app->core.config.dof);
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    joint_pvi_set_params(&app->pvi, i, pvi_params[i]);
+    joint_pd_set_params(&app->pd, i, pd_params[i]);
   }
-  app->controller = joint_pvi_as_controller(&app->pvi);
+  app->controller = joint_pd_as_controller(&app->pd);
 }
 
 static void configure_ref_shaper_and_safety(viewer_app_t *app) {
@@ -670,7 +653,7 @@ int main(int argc, char **argv) {
     mj_deleteModel(model);
     return EXIT_FAILURE;
   }
-  configure_pvi_defaults(&app);
+  configure_pd_defaults(&app);
   configure_ref_shaper_and_safety(&app);
   configure_state_filter(&app);
   configure_gravity_ff(&app);

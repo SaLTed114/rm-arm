@@ -18,9 +18,9 @@ Rules for this directory:
   shape a goal into an `arm_reference_t`, call `arm_control_step()` or
   `arm_control_step_with_feedforward()`, apply final safety limits, and send
   `arm.command` through the platform actuator adapter.
-- Controllers are plain C contexts adapted by `arm_controller_t`. `joint_pvi`
-  is the current joint-space PVI/PD controller; `joint_sweep` is kept for
-  channel verification.
+- Controllers are plain C contexts adapted by `arm_controller_t`. `joint_pd`
+  is the current joint-space PD controller; `joint_sweep` is kept for channel
+  verification.
 - `joint_state_filter` is a simple estimation layer for normalized measured
   state. Platform adapters should not hide heavy filtering outside the core.
 - `joint_ref_shaper` is a simple joint-space reference conditioner for
@@ -32,6 +32,9 @@ Rules for this directory:
   current config-driven gravity compensation module.
 - `arm_safety` is a final command-side guard for invalid state, torque limits,
   soft position limits, and overspeed protection.
+- Control performance metrics and log analysis live in PC-side `tools/`.
+  Firmware or simulation code only needs to emit compatible samples; metric
+  calculation is intentionally kept out of `arm_core`.
 
 The active robot DOF is runtime-configured through `arm_config_t.dof`, with
 fixed arrays sized by `ARM_DOF_MAX`.
@@ -101,7 +104,7 @@ one active reference source:
 
 `arm_command_t` is the controller output and final actuator target abstraction:
 
-- `joint_pvi` currently writes feedback torque into `tau_ff_nm`.
+- `joint_pd` currently writes feedback torque into `tau_ff_nm`.
 - Feedforward modules such as `joint_gravity_ff` add model-based torque to the
   same command before final limiting.
 - `q_d_rad`, `dq_d_rad_s`, `kp`, and `kd` are reserved for future command modes

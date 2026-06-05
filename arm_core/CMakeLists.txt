@@ -2,7 +2,7 @@ add_library(arm_core STATIC
   src/core/arm.c
   src/core/arm_control.c
   src/core/arm_math.c
-  src/controllers/joint_pvi.c
+  src/controllers/joint_pd.c
   src/controllers/joint_sweep.c
   src/estimation/joint_state_filter.c
   src/feedforward/joint_gravity_ff.c

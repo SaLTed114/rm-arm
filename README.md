@@ -69,8 +69,40 @@ CMake will skip the unavailable simulation targets with a warning.
 ## Simulation Programs
 
 - `armsim_verify_joints`: headless joint torque I/O verification, writes `logs/joint_verify.csv`.
+- `armsim_control_benchmark`: headless harsh-sim control benchmark, writes logs such as `logs/control_benchmark_hold_zero_harsh.csv`.
 - `armsim_viewer`: MuJoCo viewer for visual joint direction checks.
 
 The default model is `sim_mujoco/models/arm6_placeholder.xml`.
+
+## Control Metrics
+
+Control logs use a source-agnostic joint-space CSV schema. The analyzer needs
+`time_s`, `q_refN`, `dq_refN`, `tau_cmdN`, and filtered state columns
+`q_filtN/dq_filtN`; it also accepts `qN/dqN` aliases for simpler real-arm logs.
+Optional columns such as `q_measN`, `dq_measN`, `tau_ff_gravityN`, `tau_fbN`,
+`mj_ctrlN`, `state_flags`, and `command_flags` enrich the report but are not
+required.
+
+Run a benchmark:
+
+```powershell
+.\build\sim_mujoco\armsim_control_benchmark.exe hold_zero_harsh logs/control_benchmark_hold_zero_harsh.csv
+```
+
+Analyze a log:
+
+```powershell
+python tools/analyze_control_log.py logs/control_benchmark_hold_zero_harsh.csv --config configs/arm6_placeholder.yaml
+```
+
+Run all default benchmarks and analyze them in one pass:
+
+```powershell
+python tools/run_control_benchmarks.py
+```
+
+The analyzer is not tied to MuJoCo. A future real-arm miniPC logger can reuse it
+by recording compatible CSV rows from serial samples; JSONL can be added later
+without changing the core metrics definitions.
 
 Keil/STM32 sync tooling will be added after the real-vehicle adapter exists.

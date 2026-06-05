@@ -9,7 +9,7 @@
 #include "arm_core/arm_math.h"
 #include "arm_core/arm_safety.h"
 #include "arm_core/joint_gravity_ff.h"
-#include "arm_core/joint_pvi.h"
+#include "arm_core/joint_pd.h"
 #include "arm_core/joint_state_filter.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/default_arm_config.h"
@@ -20,12 +20,12 @@ static const char *default_model_path(void) {
   return "sim_mujoco/models/arm6_placeholder.xml";
 }
 
-static void configure_pvi(joint_pvi_t *pvi, uint8_t dof) {
-  static const joint_pvi_params_t pvi_params[ARM_DEFAULT_DOF] = ARMSIM_ARM6_PVI_PARAMS;
+static void configure_pd(joint_pd_t *pd, uint8_t dof) {
+  static const joint_pd_params_t pd_params[ARM_DEFAULT_DOF] = ARMSIM_ARM6_PD_PARAMS;
 
-  joint_pvi_init(pvi, dof);
+  joint_pd_init(pd, dof);
   for (uint8_t i = 0u; i < dof; ++i) {
-    joint_pvi_set_params(pvi, i, pvi_params[i]);
+    joint_pd_set_params(pd, i, pd_params[i]);
   }
 }
 
@@ -107,9 +107,9 @@ int main(int argc, char **argv) {
     ref.dq_ref_rad_s[i] = ARM_REAL_ZERO;
   }
 
-  joint_pvi_t pvi;
-  configure_pvi(&pvi, core.config.dof);
-  arm_controller_t ctrl = joint_pvi_as_controller(&pvi);
+  joint_pd_t pd;
+  configure_pd(&pd, core.config.dof);
+  arm_controller_t ctrl = joint_pd_as_controller(&pd);
 
   static const joint_gravity_ff_params_t gravity_params = ARMSIM_ARM6_GRAVITY_FF_PARAMS;
   joint_gravity_ff_t gravity;

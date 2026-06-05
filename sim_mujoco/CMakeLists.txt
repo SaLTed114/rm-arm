@@ -48,6 +48,7 @@ function(copy_mujoco_runtime target_name)
 endfunction()
 
 add_library(armsim_mujoco STATIC
+  src/control_log.c
   src/csv_logger.c
   src/default_arm_config.c
   src/mujoco_arm.c
@@ -79,10 +80,41 @@ add_executable(armsim_verify_harsh_hold apps/armsim_verify_harsh_hold.c)
 target_link_libraries(armsim_verify_harsh_hold PRIVATE armsim_mujoco)
 copy_mujoco_runtime(armsim_verify_harsh_hold)
 
+add_executable(armsim_control_benchmark apps/armsim_control_benchmark.c)
+target_link_libraries(armsim_control_benchmark PRIVATE armsim_mujoco)
+copy_mujoco_runtime(armsim_control_benchmark)
+
 if(ARMSIM_BUILD_TESTS)
   add_test(NAME armsim_verify_joints COMMAND armsim_verify_joints WORKING_DIRECTORY "${ARMSIM_ROOT}")
   add_test(NAME armsim_verify_gravity_comp COMMAND armsim_verify_gravity_comp WORKING_DIRECTORY "${ARMSIM_ROOT}")
   add_test(NAME armsim_verify_harsh_hold COMMAND armsim_verify_harsh_hold WORKING_DIRECTORY "${ARMSIM_ROOT}")
+  add_test(
+    NAME armsim_control_benchmark_hold_zero
+    COMMAND armsim_control_benchmark hold_zero_harsh logs/control_benchmark_hold_zero_harsh.csv
+    WORKING_DIRECTORY "${ARMSIM_ROOT}"
+  )
+
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(
+      NAME analyze_control_benchmark
+      COMMAND ${Python3_EXECUTABLE}
+        tools/analyze_control_log.py
+        logs/control_benchmark_hold_zero_harsh.csv
+        --config configs/arm6_placeholder.yaml
+        --json-out logs/control_benchmark_hold_zero_harsh_metrics.json
+      WORKING_DIRECTORY "${ARMSIM_ROOT}"
+    )
+    set_tests_properties(analyze_control_benchmark PROPERTIES DEPENDS armsim_control_benchmark_hold_zero)
+    add_test(
+      NAME analyze_control_minimal_csv
+      COMMAND ${Python3_EXECUTABLE}
+        tools/analyze_control_log.py
+        tests/fixtures/minimal_control_log.csv
+        --json-out logs/minimal_control_log_metrics.json
+      WORKING_DIRECTORY "${ARMSIM_ROOT}"
+    )
+  endif()
 endif()
 
 set(GLFW_TARGET "")

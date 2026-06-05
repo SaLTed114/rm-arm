@@ -6,7 +6,7 @@
 #include "arm_core/arm_feedforward.h"
 #include "arm_core/arm_math.h"
 #include "arm_core/joint_ref_shaper.h"
-#include "arm_core/joint_pvi.h"
+#include "arm_core/joint_pd.h"
 #include "arm_core/joint_sweep.h"
 
 static arm_config_t make_test_config(void) {
@@ -73,18 +73,18 @@ int main(void) {
   assert(arm.command.flags == 0u);
   assert(arm.command.tau_ff_nm[0] == 0.0);
 
-  joint_pvi_t pvi;
-  joint_pvi_init(&pvi, arm.config.dof);
+  joint_pd_t pd;
+  joint_pd_init(&pd, arm.config.dof);
   arm_reference_zero(&ref, arm.config.dof);
   ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   for (uint8_t i = 0u; i < arm.config.dof; ++i) {
-    joint_pvi_set_params(&pvi, i, (joint_pvi_params_t){10.0, 1.0, 0.0, 0.0, 10.0});
+    joint_pd_set_params(&pd, i, (joint_pd_params_t){10.0, 1.0, 10.0});
     ref.q_ref_rad[i] = 0.0;
     ref.dq_ref_rad_s[i] = 0.0;
     arm.state.q_rad[i] = 0.0;
     arm.state.dq_rad_s[i] = 0.0;
   }
-  controller = joint_pvi_as_controller(&pvi);
+  controller = joint_pd_as_controller(&pd);
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
   for (uint8_t i = 0u; i < arm.config.dof; ++i) {
     assert(near_zero(arm.command.tau_ff_nm[i]));
@@ -94,7 +94,7 @@ int main(void) {
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] > 0.0);
 
-  joint_pvi_set_params(&pvi, 0u, (joint_pvi_params_t){10.0, 0.0, 0.0, 0.0, 0.75});
+  joint_pd_set_params(&pd, 0u, (joint_pd_params_t){10.0, 0.0, 0.75});
   ref.q_ref_rad[0] = 1.0;
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] == 0.75);
@@ -108,7 +108,7 @@ int main(void) {
   assert(arm_control_step_with_feedforward(&arm, &ref, &controller, &feedforward) == ARM_OK);
   assert(near_zero(arm.command.tau_ff_nm[0] - 0.4));
 
-  joint_pvi_set_params(&pvi, 0u, (joint_pvi_params_t){10.0, 0.0, 0.0, 0.0, 10.0});
+  joint_pd_set_params(&pd, 0u, (joint_pd_params_t){10.0, 0.0, 10.0});
   ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   ref.q_ref_rad[0] = 1.0;
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
