@@ -19,7 +19,6 @@ static int joint_pvi_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
     const joint_pvi_params_t *params = &pvi->params[i];
     const arm_real_t q_ref = (ref->flags & ARM_REFERENCE_Q_VALID) ? ref->q_ref_rad[i] : state->q_rad[i];
     const arm_real_t dq_ref = (ref->flags & ARM_REFERENCE_DQ_VALID) ? ref->dq_ref_rad_s[i] : ARM_REAL_ZERO;
-    const arm_real_t tau_ff = (ref->flags & ARM_REFERENCE_TAU_FF_VALID) ? ref->tau_ff_nm[i] : ARM_REAL_ZERO;
     const arm_real_t q_err = q_ref - state->q_rad[i];
     const arm_real_t dq_err = dq_ref - state->dq_rad_s[i];
 
@@ -31,7 +30,7 @@ static int joint_pvi_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
       }
     }
 
-    arm_real_t tau = params->kp * q_err + params->kv * dq_err + pvi->integral_nm[i] + tau_ff;
+    arm_real_t tau = params->kp * q_err + params->kv * dq_err + pvi->integral_nm[i];
     if (params->out_limit > ARM_REAL_ZERO) {
       tau = arm_clamp(tau, -params->out_limit, params->out_limit);
     }

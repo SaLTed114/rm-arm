@@ -5,6 +5,7 @@ add_library(arm_core STATIC
   src/controllers/joint_pvi.c
   src/controllers/joint_sweep.c
   src/estimation/joint_state_filter.c
+  src/feedforward/joint_gravity_ff.c
   src/reference/joint_ref_shaper.c
   src/safety/arm_safety.c
 )
@@ -20,6 +21,10 @@ target_compile_features(arm_core PUBLIC c_std_11)
 
 if(ARM_CORE_USE_FLOAT)
   target_compile_definitions(arm_core PUBLIC ARM_CORE_USE_FLOAT)
+endif()
+
+if(UNIX)
+  target_link_libraries(arm_core PUBLIC m)
 endif()
 
 if(MSVC)

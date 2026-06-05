@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-#include "arm_core/arm_control.h"
+#include "arm_core/arm_controller.h"
 
 typedef struct {
   arm_real_t torque_nm;

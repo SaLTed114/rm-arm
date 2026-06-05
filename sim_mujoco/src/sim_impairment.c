@@ -213,10 +213,10 @@ int armsim_step_once_impaired(
     arm_t *core,
     const arm_reference_t *ref,
     const arm_safety_t *safety,
-    arm_controller_t *controller,
+    arm_controller_t *ctrl,
     armsim_impairment_t *impairment) {
   return armsim_step_once_impaired_filtered(
-      model, data, arm, core, ref, safety, controller, impairment, NULL, NULL);
+      model, data, arm, core, ref, safety, ctrl, impairment, NULL, NULL);
 }
 
 int armsim_step_once_impaired_filtered(
@@ -226,13 +226,29 @@ int armsim_step_once_impaired_filtered(
     arm_t *core,
     const arm_reference_t *ref,
     const arm_safety_t *safety,
-    arm_controller_t *controller,
+    arm_controller_t *ctrl,
+    armsim_impairment_t *impairment,
+    joint_state_filter_t *state_filter,
+    arm_state_t *measured_state) {
+  return armsim_step_once_impaired_filtered_with_feedforward(
+      model, data, arm, core, ref, safety, ctrl, NULL, impairment, state_filter, measured_state);
+}
+
+int armsim_step_once_impaired_filtered_with_feedforward(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *ctrl,
+    arm_feedforward_t *ff,
     armsim_impairment_t *impairment,
     joint_state_filter_t *state_filter,
     arm_state_t *measured_state) {
   if (!impairment || !impairment->config.enabled) {
     if (!state_filter) {
-      return armsim_step_once(model, data, arm, core, ref, safety, controller);
+      return armsim_step_once_with_feedforward(model, data, arm, core, ref, safety, ctrl, ff);
     }
     if (!model || !data || !arm || !core) {
       return ARM_ERR_NULL;
@@ -245,7 +261,8 @@ int armsim_step_once_impaired_filtered(
     if (filter_status != ARM_OK) {
       return filter_status;
     }
-    return armsim_step_once_with_state(model, data, arm, core, &filtered, ref, safety, controller);
+    return armsim_step_once_with_state_and_feedforward(
+        model, data, arm, core, &filtered, ref, safety, ctrl, ff);
   }
   if (!model || !data || !arm || !core) {
     return ARM_ERR_NULL;
@@ -279,7 +296,7 @@ int armsim_step_once_impaired_filtered(
       core->state = *measured;
     }
 
-    const int status = arm_control_step(core, ref, controller);
+    const int status = arm_control_step_with_feedforward(core, ref, ctrl, ff);
     if (status != ARM_OK) {
       return status;
     }

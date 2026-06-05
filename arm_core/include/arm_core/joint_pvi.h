@@ -1,7 +1,7 @@
 #ifndef ARM_CORE_JOINT_PVI_H_
 #define ARM_CORE_JOINT_PVI_H_
 
-#include "arm_core/arm_control.h"
+#include "arm_core/arm_controller.h"
 
 typedef struct {
   arm_real_t kp;

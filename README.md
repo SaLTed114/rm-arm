@@ -6,8 +6,41 @@ ArmSim is split into a portable control core and a MuJoCo simulation harness.
 
 - `arm_core/`: pure C reusable arm core, including interfaces, reference sources, controllers, safety, and verification helpers. This is the part intended to be synced into a Keil/STM32F4xx project.
 - `sim_mujoco/`: MuJoCo adapters, placeholder model, viewer, headless verifier, and CSV logging.
+- `configs/`: human-maintained arm model and tuning source files. The current placeholder arm is defined by `configs/arm6_placeholder.yaml`.
+- `tools/`: PC-side generation and analysis tools. These are not part of the embedded core.
 - `third_party/`: external PC-side dependencies such as MuJoCo and GLFW.
 - `reference/`: read-only reference code. It is not built or modified by this project.
+
+## Config Generation
+
+The placeholder arm uses `configs/arm6_placeholder.yaml` as the single source
+for joint order, axes, limits, actuator names, controller tuning, simulation
+impairments, and MuJoCo geometry. Generated files are committed so normal CMake
+builds do not need Python or PyYAML:
+
+- `sim_mujoco/models/arm6_placeholder.xml`
+- `sim_mujoco/include/armsim/arm6_sim_config.h`
+- `sim_mujoco/src/default_arm_config.c`
+
+After editing the config, regenerate the files:
+
+```powershell
+python tools/generate_arm_model.py --config configs/arm6_placeholder.yaml
+```
+
+To check whether generated files are stale:
+
+```powershell
+python tools/generate_arm_model.py --config configs/arm6_placeholder.yaml --check
+```
+
+The generator reads YAML through PyYAML and also supports JSON input. The
+generated C and XML files are tool outputs; change the config instead of editing
+them by hand. If PyYAML is missing, install it with:
+
+```powershell
+python -m pip install PyYAML
+```
 
 ## Build
 

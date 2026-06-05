@@ -14,7 +14,16 @@ int armsim_step_once(
     arm_t *core,
     const arm_reference_t *ref,
     const arm_safety_t *safety,
-    arm_controller_t *controller);
+    arm_controller_t *ctrl);
+int armsim_step_once_with_feedforward(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *ctrl,
+    arm_feedforward_t *ff);
 int armsim_step_once_with_state(
     mjModel *model,
     mjData *data,
@@ -23,6 +32,16 @@ int armsim_step_once_with_state(
     const arm_state_t *state,
     const arm_reference_t *ref,
     const arm_safety_t *safety,
-    arm_controller_t *controller);
+    arm_controller_t *ctrl);
+int armsim_step_once_with_state_and_feedforward(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_state_t *state,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *ctrl,
+    arm_feedforward_t *ff);
 
 #endif

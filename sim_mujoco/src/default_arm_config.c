@@ -1,3 +1,4 @@
+/* Generated from configs/arm6_placeholder.yaml. Do not edit by hand. */
 #include "armsim/default_arm_config.h"
 
 #include "armsim/arm6_sim_config.h"

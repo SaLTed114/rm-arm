@@ -6,6 +6,7 @@
 #include <mujoco/mujoco.h>
 
 #include "arm_core/arm_safety.h"
+#include "arm_core/joint_gravity_ff.h"
 #include "arm_core/joint_ref_shaper.h"
 #include "arm_core/joint_state_filter.h"
 #include "arm_core/joint_pvi.h"
@@ -45,12 +46,15 @@ typedef struct {
   arm_safety_t safety;
   joint_pvi_t pvi;
   arm_controller_t controller;
+  joint_gravity_ff_t gravity_ff;
+  arm_feedforward_t feedforward;
   armsim_impairment_t impairment;
   FILE *debug_log;
 
   double slider_angle_rad[ARM_DOF_MAX];
   viewer_mode_t mode;
   bool gravity_enabled;
+  bool gravity_ff_enabled;
   bool contacts_enabled;
   bool harsh_sim_enabled;
   int active_slider;
@@ -355,9 +359,14 @@ static bool handle_panel_click(viewer_app_t *app, double fb_x, double fb_y, int 
     sync_target_to_current_pose(app);
     return true;
   }
-  if (button_hit(fb_x, fb_y, 24, y_harsh, 292, 28)) {
+  if (button_hit(fb_x, fb_y, 24, y_harsh, 140, 28)) {
     app->harsh_sim_enabled = !app->harsh_sim_enabled;
     armsim_impairment_reset(&app->impairment);
+    sync_target_to_current_pose(app);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 176, y_harsh, 140, 28)) {
+    app->gravity_ff_enabled = !app->gravity_ff_enabled;
     sync_target_to_current_pose(app);
     return true;
   }
@@ -493,6 +502,9 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
     app->harsh_sim_enabled = !app->harsh_sim_enabled;
     armsim_impairment_reset(&app->impairment);
     sync_target_to_current_pose(app);
+  } else if (key == GLFW_KEY_F) {
+    app->gravity_ff_enabled = !app->gravity_ff_enabled;
+    sync_target_to_current_pose(app);
   }
 }
 
@@ -547,7 +559,9 @@ static void draw_panel(viewer_app_t *app, mjrRect viewport) {
   draw_button(&app->context, 176, viewport.height - 140, 140, 28, "Contacts", app->contacts_enabled);
   draw_button(&app->context, 24, viewport.height - 176, 140, 28, "Reset", false);
   draw_button(&app->context, 176, viewport.height - 176, 140, 28, "Sync target", false);
-  draw_button(&app->context, 24, viewport.height - 212, 292, 28, "Harsh Sim", app->harsh_sim_enabled);
+  draw_button(&app->context, 24, viewport.height - 212, 140, 28, "Harsh Sim", app->harsh_sim_enabled);
+  draw_button(&app->context, 176, viewport.height - 212, 140, 28, "Gravity FF",
+              app->gravity_ff_enabled);
 
   const mjrRect hint = {24, viewport.height - 238, 310, 20};
   mjr_label(hint, mjFONT_NORMAL, "Sliders edit pose or PD target. Mouse scene: rotate, pan, zoom.", 0.08f, 0.09f,
@@ -606,6 +620,13 @@ static void configure_state_filter(viewer_app_t *app) {
   arm_state_zero(&app->measured_state, app->core.config.dof);
 }
 
+static void configure_gravity_ff(viewer_app_t *app) {
+  static const joint_gravity_ff_params_t gravity_params = ARMSIM_ARM6_GRAVITY_FF_PARAMS;
+
+  joint_gravity_ff_init(&app->gravity_ff, &gravity_params);
+  app->feedforward = joint_gravity_ff_as_feedforward(&app->gravity_ff);
+}
+
 int main(int argc, char **argv) {
   const char *model_path = argc > 1 ? argv[1] : default_model_path();
 
@@ -628,6 +649,7 @@ int main(int argc, char **argv) {
   app.data = data;
   app.mode = VIEWER_MODE_POSE_EDIT;
   app.gravity_enabled = true;
+  app.gravity_ff_enabled = true;
   app.contacts_enabled = true;
   app.harsh_sim_enabled = false;
   arm_config_t config = armsim_default_arm6_config();
@@ -651,6 +673,7 @@ int main(int argc, char **argv) {
   configure_pvi_defaults(&app);
   configure_ref_shaper_and_safety(&app);
   configure_state_filter(&app);
+  configure_gravity_ff(&app);
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   armsim_impairment_init(&app.impairment, &impairment_config, app.core.config.dof);
   apply_physics_options(&app);
@@ -713,8 +736,9 @@ int main(int argc, char **argv) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;
         }
+        arm_feedforward_t *feedforward = app.gravity_ff_enabled && app.gravity_enabled ? &app.feedforward : NULL;
         const int step_status = app.harsh_sim_enabled
-                                    ? armsim_step_once_impaired_filtered(
+                                    ? armsim_step_once_impaired_filtered_with_feedforward(
                                           model,
                                           data,
                                           &app.arm,
@@ -722,10 +746,11 @@ int main(int argc, char **argv) {
                                           &app.control_ref,
                                           &app.safety,
                                           &app.controller,
+                                          feedforward,
                                           &app.impairment,
                                           &app.state_filter,
                                           &app.measured_state)
-                                    : armsim_step_once_with_state(
+                                    : armsim_step_once_with_state_and_feedforward(
                                           model,
                                           data,
                                           &app.arm,
@@ -733,7 +758,8 @@ int main(int argc, char **argv) {
                                           &app.core.state,
                                           &app.control_ref,
                                           &app.safety,
-                                          &app.controller);
+                                          &app.controller,
+                                          feedforward);
         if (step_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;

@@ -1,0 +1,141 @@
+schema_version: 1
+source_label: configs/arm6_placeholder.yaml
+model: arm6_placeholder
+dof: 6
+
+outputs:
+  mjcf: sim_mujoco/models/arm6_placeholder.xml
+  sim_config_header: sim_mujoco/include/armsim/arm6_sim_config.h
+  default_arm_config: sim_mujoco/src/default_arm_config.c
+
+joints:
+  - { name: joint_1, actuator: motor_1, axis: [0, 0, 1], sign: 1.0, q_offset_rad: 0.0, q_min_rad: -3.14159, q_max_rad: 3.14159, torque_limit_nm: 10.0 }
+  - { name: joint_2, actuator: motor_2, axis: [0, 1, 0], sign: 1.0, q_offset_rad: 0.0, q_min_rad: -2.6, q_max_rad: 2.6, torque_limit_nm: 40.0 }
+  - { name: joint_3, actuator: motor_3, axis: [0, 1, 0], sign: 1.0, q_offset_rad: 0.0, q_min_rad: -2.8, q_max_rad: 2.8, torque_limit_nm: 30.0 }
+  - { name: joint_4, actuator: motor_4, axis: [1, 0, 0], sign: 1.0, q_offset_rad: 0.0, q_min_rad: -3.14159, q_max_rad: 3.14159, torque_limit_nm: 8.0 }
+  - { name: joint_5, actuator: motor_5, axis: [0, 1, 0], sign: 1.0, q_offset_rad: 0.0, q_min_rad: -3.14159, q_max_rad: 3.14159, torque_limit_nm: 8.0 }
+  - { name: joint_6, actuator: motor_6, axis: [1, 0, 0], sign: 1.0, q_offset_rad: 0.0, q_min_rad: -3.14159, q_max_rad: 3.14159, torque_limit_nm: 8.0 }
+
+control:
+  pvi:
+    - { kp: 18.0, kv: 2.5, ki: 0.0, integral_limit: 0.0, out_limit: 4.0 }
+    - { kp: 55.0, kv: 8.0, ki: 0.0, integral_limit: 0.0, out_limit: 12.0 }
+    - { kp: 45.0, kv: 6.0, ki: 0.0, integral_limit: 0.0, out_limit: 10.0 }
+    - { kp: 6.0, kv: 0.8, ki: 0.0, integral_limit: 0.0, out_limit: 3.0 }
+    - { kp: 6.0, kv: 0.8, ki: 0.0, integral_limit: 0.0, out_limit: 3.0 }
+    - { kp: 3.0, kv: 0.5, ki: 0.0, integral_limit: 0.0, out_limit: 2.0 }
+
+  reference:
+    dq_limits_rad_s: [1.8, 1.2, 1.4, 2.5, 2.5, 3.0]
+    ddq_limits_rad_s2: [6.0, 4.0, 5.0, 12.0, 12.0, 16.0]
+
+  state_filter:
+    - { q_time_constant_s: 0.0, dq_time_constant_s: 0.012, use_dq_from_q_diff: false }
+    - { q_time_constant_s: 0.0, dq_time_constant_s: 0.018, use_dq_from_q_diff: false }
+    - { q_time_constant_s: 0.0, dq_time_constant_s: 0.018, use_dq_from_q_diff: false }
+    - { q_time_constant_s: 0.0, dq_time_constant_s: 0.010, use_dq_from_q_diff: false }
+    - { q_time_constant_s: 0.0, dq_time_constant_s: 0.010, use_dq_from_q_diff: false }
+    - { q_time_constant_s: 0.0, dq_time_constant_s: 0.010, use_dq_from_q_diff: false }
+
+  safety:
+    q_margin_rad: 0.04
+    dq_limit_scale: 1.5
+
+harsh_sim:
+  control_period_s: 0.002
+  control_jitter_s: 0.00025
+  sensor_delay_steps: 2
+  encoder_resolution_rad: 0.001
+  q_noise_rad: 0.00035
+  dq_noise_rad_s: 0.05
+  tau_est_noise_nm: 0.08
+  dq_filter_alpha: 1.0
+  actuator_tau_time_constant_s: 0.006
+  actuator_tau_rate_limit_nm_s: 450.0
+  actuator_deadband_nm: 0.04
+  random_seed: "0x12345678"
+
+mujoco:
+  compiler: { angle: radian, inertiafromgeom: true }
+  option:
+    timestep: 0.001
+    integrator: RK4
+    gravity: [0, 0, -9.81]
+
+  defaults:
+    joint:
+      type: hinge
+      limited: true
+      range: [-3.14159, 3.14159]
+      damping: 0.25
+      armature: 0.03
+      frictionloss: 0.02
+    geom:
+      type: capsule
+      size: 0.025
+      density: 900
+      condim: 3
+      friction: [0.8, 0.02, 0.001]
+      rgba: [0.65, 0.70, 0.76, 1]
+    motor: { ctrllimited: true, gear: 1 }
+
+  worldbody:
+    lights:
+      - { name: key, pos: [0, -1.2, 1.8], dir: [0, 1, -1] }
+    geoms:
+      - { name: floor, type: plane, pos: [0, 0, -0.02], size: [1.2, 1.2, 0.02], condim: 3, friction: [0.9, 0.02, 0.001], rgba: [0.18, 0.19, 0.20, 1] }
+    bodies:
+      - name: base
+        pos: [0, 0, 0]
+        geoms:
+          - { name: base_plate, type: cylinder, size: [0.12, 0.035], mass: 1.6, rgba: [0.20, 0.22, 0.25, 1] }
+        bodies:
+          - name: yaw_column
+            pos: [0, 0, 0.04]
+            joint: joint_1
+            geoms:
+              - { name: yaw_column_geom, type: cylinder, size: [0.065, 0.09], pos: [0, 0, 0.09], mass: 1.2, rgba: [0.28, 0.31, 0.35, 1] }
+              - { name: shoulder_shell, type: sphere, size: 0.085, pos: [0, 0, 0.18], mass: 0.8, rgba: [0.30, 0.34, 0.39, 1] }
+            bodies:
+              - name: upper_arm
+                pos: [0, 0, 0.18]
+                joint: joint_2
+                geoms:
+                  - { name: shoulder_axis, type: cylinder, fromto: [0, -0.10, 0, 0, 0.10, 0], size: 0.035, mass: 0.35, rgba: [0.38, 0.42, 0.48, 1] }
+                  - { name: upper_arm_geom, fromto: [0, 0, 0, 0.34, 0, 0], size: 0.045, mass: 3.2, rgba: [0.63, 0.68, 0.74, 1] }
+                bodies:
+                  - name: forearm
+                    pos: [0.34, 0, 0]
+                    joint: joint_3
+                    geoms:
+                      - { name: elbow_shell, type: sphere, size: 0.065, mass: 0.55, rgba: [0.36, 0.40, 0.46, 1] }
+                      - { name: elbow_axis, type: cylinder, fromto: [0, -0.08, 0, 0, 0.08, 0], size: 0.028, mass: 0.25, rgba: [0.38, 0.42, 0.48, 1] }
+                      - { name: forearm_geom, fromto: [0, 0, 0, 0.28, 0, 0], size: 0.038, mass: 2.4, rgba: [0.66, 0.71, 0.77, 1] }
+                    bodies:
+                      - name: wrist_roll_1
+                        pos: [0.28, 0, 0]
+                        joint: joint_4
+                        geoms:
+                          - { name: wrist_roll_1_geom, fromto: [0, 0, 0, 0.075, 0, 0], size: 0.026, mass: 0.35, rgba: [0.45, 0.49, 0.54, 1] }
+                        bodies:
+                          - name: wrist_pitch
+                            pos: [0.075, 0, 0]
+                            joint: joint_5
+                            geoms:
+                              - { name: wrist_pitch_shell, type: sphere, size: 0.040, mass: 0.25, rgba: [0.46, 0.50, 0.56, 1] }
+                              - { name: wrist_pitch_axis, type: cylinder, fromto: [0, -0.055, 0, 0, 0.055, 0], size: 0.020, mass: 0.12, rgba: [0.38, 0.42, 0.48, 1] }
+                              - { name: wrist_pitch_link, fromto: [0, 0, 0, 0.065, 0, 0], size: 0.022, mass: 0.22, rgba: [0.56, 0.60, 0.65, 1] }
+                            bodies:
+                              - name: wrist_roll_2
+                                pos: [0.065, 0, 0]
+                                joint: joint_6
+                                geoms:
+                                  - { name: wrist_roll_2_geom, fromto: [0, 0, 0, 0.055, 0, 0], size: 0.020, mass: 0.18, rgba: [0.85, 0.55, 0.24, 1] }
+                                  - { name: gripper_mount, type: cylinder, fromto: [0.050, 0, 0, 0.078, 0, 0], size: 0.030, mass: 0.12, rgba: [0.70, 0.72, 0.74, 1] }
+                                  - { name: gripper_palm, type: box, pos: [0.088, 0, 0], size: [0.016, 0.050, 0.030], mass: 0.18, rgba: [0.86, 0.56, 0.25, 1] }
+                                  - { name: gripper_left_finger, type: box, pos: [0.138, 0.035, 0], size: [0.044, 0.010, 0.012], mass: 0.055, rgba: [0.93, 0.68, 0.32, 1] }
+                                  - { name: gripper_right_finger, type: box, pos: [0.138, -0.035, 0], size: [0.044, 0.010, 0.012], mass: 0.055, rgba: [0.93, 0.68, 0.32, 1] }
+                                  - { name: gripper_left_tip, type: box, pos: [0.176, 0.026, 0], size: [0.010, 0.020, 0.011], mass: 0.025, rgba: [0.80, 0.46, 0.20, 1] }
+                                  - { name: gripper_right_tip, type: box, pos: [0.176, -0.026, 0], size: [0.010, 0.020, 0.011], mass: 0.025, rgba: [0.80, 0.46, 0.20, 1] }
+                                sites:
+                                  - { name: tool0, pos: [0.190, 0, 0], size: 0.003, rgba: [0.95, 0.95, 0.95, 0] }

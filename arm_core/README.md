@@ -9,15 +9,15 @@ Rules for this directory:
 - No dynamic allocation.
 - Public headers live under `include/arm_core/`.
 - Source files are grouped internally under `src/core`, `src/controllers`,
-  `src/estimation`, `src/reference`, and `src/safety`; this
+  `src/estimation`, `src/feedforward`, `src/reference`, and `src/safety`; this
   does not change public include paths.
 - Host-side tests live outside this directory. A future Keil sync script should
   run the tests first, then copy only the approved `arm_core/include` and
   `arm_core/src` files.
 - Platform code should keep one `arm_t`, update `arm.state` each control tick,
-  shape a goal into an `arm_reference_t`, call `arm_control_step()`, apply
-  final safety limits, and send `arm.command` through the platform actuator
-  adapter.
+  shape a goal into an `arm_reference_t`, call `arm_control_step()` or
+  `arm_control_step_with_feedforward()`, apply final safety limits, and send
+  `arm.command` through the platform actuator adapter.
 - Controllers are plain C contexts adapted by `arm_controller_t`. `joint_pvi`
   is the current joint-space PVI/PD controller; `joint_sweep` is kept for
   channel verification.
@@ -26,6 +26,10 @@ Rules for this directory:
 - `joint_ref_shaper` is a simple joint-space reference conditioner for
   manual/teleop-style targets, with position, velocity, and acceleration
   limits.
+- Feedforward modules are plain C contexts adapted by `arm_feedforward_t`.
+  They run in parallel with the feedback controller and add model-based torque
+  into the final command before command limiting. `joint_gravity_ff` is the
+  current config-driven gravity compensation module.
 - `arm_safety` is a final command-side guard for invalid state, torque limits,
   soft position limits, and overspeed protection.
 
@@ -50,8 +54,9 @@ explicitly desired. `arm_safety` remains a final command-side guard; it does not
 replace reference source logic.
 
 `arm_command_t` is the final actuator command abstraction; a pure torque
-controller writes `tau_ff_nm` with zero `kp/kd/q_d/dq_d`, while a future MIT-mode
-adapter can use the full command fields.
+controller and any enabled feedforward modules write `tau_ff_nm` with zero
+`kp/kd/q_d/dq_d`, while a future MIT-mode adapter can use the full command
+fields.
 
 ## Core Contract
 
@@ -89,10 +94,16 @@ one active reference source:
   `joint_trajectory_step()` path.
 - These sources are alternatives by default; do not feed trajectory output
   through `joint_ref_shaper` unless that behavior is explicitly requested.
+- Reference feedforward fields are not consumed by the standard feedback
+  controller path. Model compensation such as gravity should run through
+  `arm_feedforward_t` instead of being hidden inside a controller or reference
+  shaper.
 
 `arm_command_t` is the controller output and final actuator target abstraction:
 
-- `joint_pvi` currently writes only `tau_ff_nm`.
+- `joint_pvi` currently writes feedback torque into `tau_ff_nm`.
+- Feedforward modules such as `joint_gravity_ff` add model-based torque to the
+  same command before final limiting.
 - `q_d_rad`, `dq_d_rad_s`, `kp`, and `kd` are reserved for future command modes
   such as MIT-style actuator targets.
 - `arm_limit_command()` and `arm_safety_apply()` protect the final command side;

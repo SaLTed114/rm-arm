@@ -58,7 +58,7 @@ int armsim_step_once_impaired(
     arm_t *core,
     const arm_reference_t *ref,
     const arm_safety_t *safety,
-    arm_controller_t *controller,
+    arm_controller_t *ctrl,
     armsim_impairment_t *impairment);
 int armsim_step_once_impaired_filtered(
     mjModel *model,
@@ -67,7 +67,19 @@ int armsim_step_once_impaired_filtered(
     arm_t *core,
     const arm_reference_t *ref,
     const arm_safety_t *safety,
-    arm_controller_t *controller,
+    arm_controller_t *ctrl,
+    armsim_impairment_t *impairment,
+    joint_state_filter_t *state_filter,
+    arm_state_t *measured_state);
+int armsim_step_once_impaired_filtered_with_feedforward(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *ctrl,
+    arm_feedforward_t *ff,
     armsim_impairment_t *impairment,
     joint_state_filter_t *state_filter,
     arm_state_t *measured_state);

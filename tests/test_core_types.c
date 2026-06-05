@@ -3,6 +3,8 @@
 
 #include "arm_core/arm_safety.h"
 #include "arm_core/arm_control.h"
+#include "arm_core/arm_feedforward.h"
+#include "arm_core/arm_math.h"
 #include "arm_core/joint_ref_shaper.h"
 #include "arm_core/joint_pvi.h"
 #include "arm_core/joint_sweep.h"
@@ -23,6 +25,29 @@ static arm_config_t make_test_config(void) {
 static int near_zero(arm_real_t value) {
   return fabs((double)value) < 1.0e-9;
 }
+
+typedef struct {
+  uint8_t dof;
+  arm_real_t tau_nm[ARM_DOF_MAX];
+} test_feedforward_t;
+
+static int test_feedforward_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
+  (void)ref;
+  test_feedforward_t *feedforward = (test_feedforward_t *)ctx;
+  if (!feedforward || !arm) return ARM_ERR_NULL;
+  if (!arm_dof_matches(feedforward->dof, arm->config.dof)) return ARM_ERR_DOF;
+
+  for (uint8_t i = 0u; i < feedforward->dof; ++i) {
+    arm->command.tau_ff_nm[i] += feedforward->tau_nm[i];
+  }
+  arm->command.flags |= ARM_COMMAND_TAU_FF_VALID;
+  return ARM_OK;
+}
+
+static const arm_feedforward_vtable_t TEST_FEEDFORWARD_VTABLE = {
+  NULL,
+  test_feedforward_step,
+};
 
 int main(void) {
   arm_config_t config = make_test_config();
@@ -74,7 +99,18 @@ int main(void) {
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] == 0.75);
 
+  test_feedforward_t test_ff = {0};
+  test_ff.dof = arm.config.dof;
+  test_ff.tau_nm[0] = 0.4;
+  arm_feedforward_t feedforward = {&TEST_FEEDFORWARD_VTABLE, &test_ff};
+  ref.q_ref_rad[0] = 0.0;
+  ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  assert(arm_control_step_with_feedforward(&arm, &ref, &controller, &feedforward) == ARM_OK);
+  assert(near_zero(arm.command.tau_ff_nm[0] - 0.4));
+
   joint_pvi_set_params(&pvi, 0u, (joint_pvi_params_t){10.0, 0.0, 0.0, 0.0, 10.0});
+  ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  ref.q_ref_rad[0] = 1.0;
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] == 1.5);
 

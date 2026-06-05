@@ -51,6 +51,7 @@ add_library(armsim_mujoco STATIC
   src/csv_logger.c
   src/default_arm_config.c
   src/mujoco_arm.c
+  src/mujoco_gravity_oracle.c
   src/sim_impairment.c
   src/sim_loop.c
 )
@@ -70,8 +71,18 @@ add_executable(armsim_verify_joints apps/armsim_verify_joints.c)
 target_link_libraries(armsim_verify_joints PRIVATE armsim_mujoco)
 copy_mujoco_runtime(armsim_verify_joints)
 
+add_executable(armsim_verify_gravity_comp apps/armsim_verify_gravity_comp.c)
+target_link_libraries(armsim_verify_gravity_comp PRIVATE armsim_mujoco)
+copy_mujoco_runtime(armsim_verify_gravity_comp)
+
+add_executable(armsim_verify_harsh_hold apps/armsim_verify_harsh_hold.c)
+target_link_libraries(armsim_verify_harsh_hold PRIVATE armsim_mujoco)
+copy_mujoco_runtime(armsim_verify_harsh_hold)
+
 if(ARMSIM_BUILD_TESTS)
   add_test(NAME armsim_verify_joints COMMAND armsim_verify_joints WORKING_DIRECTORY "${ARMSIM_ROOT}")
+  add_test(NAME armsim_verify_gravity_comp COMMAND armsim_verify_gravity_comp WORKING_DIRECTORY "${ARMSIM_ROOT}")
+  add_test(NAME armsim_verify_harsh_hold COMMAND armsim_verify_harsh_hold WORKING_DIRECTORY "${ARMSIM_ROOT}")
 endif()
 
 set(GLFW_TARGET "")

@@ -73,9 +73,6 @@ int joint_ref_shaper_step(
 
   arm_reference_zero(shaped_ref, shaper->dof);
   shaped_ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
-  if (goal_ref->flags & ARM_REFERENCE_TAU_FF_VALID) {
-    shaped_ref->flags |= ARM_REFERENCE_TAU_FF_VALID;
-  }
 
   const arm_real_t dt = state->dt_s > ARM_REAL_ZERO ? state->dt_s : ARM_REAL_ZERO;
   for (uint8_t i = 0u; i < shaper->dof; ++i) {
@@ -118,8 +115,6 @@ int joint_ref_shaper_step(
     shaper->dq_ref_rad_s[i] = next_dq;
     shaped_ref->q_ref_rad[i] = next_q;
     shaped_ref->dq_ref_rad_s[i] = next_dq;
-    shaped_ref->tau_ff_nm[i] =
-        (goal_ref->flags & ARM_REFERENCE_TAU_FF_VALID) ? goal_ref->tau_ff_nm[i] : ARM_REAL_ZERO;
   }
 
   return ARM_OK;
