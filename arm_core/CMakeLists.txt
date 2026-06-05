@@ -3,7 +3,7 @@ add_library(arm_core STATIC
   src/arm_control.c
   src/arm_math.c
   src/arm_safety.c
-  src/joint_ref_planner.c
+  src/joint_ref_shaper.c
   src/joint_pvi.c
   src/joint_sweep.c
 )

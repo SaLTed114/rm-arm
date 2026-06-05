@@ -5,17 +5,13 @@
 static int joint_sweep_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
   (void)ref;
   joint_sweep_t *sweep = (joint_sweep_t *)ctx;
-  if (!sweep || !arm) {
-    return ARM_ERR_NULL;
-  }
+  if (!sweep || !arm) return ARM_ERR_NULL;
 
   const arm_config_t *config = &arm->config;
   const arm_state_t *state = &arm->state;
   arm_command_t *command = &arm->command;
 
-  if (sweep->dof == 0u || sweep->dof > ARM_DOF_MAX || sweep->dof != config->dof) {
-    return ARM_ERR_DOF;
-  }
+  if (!arm_dof_matches(config->dof, sweep->dof)) return ARM_ERR_DOF;
 
   arm_command_zero(command, config->dof);
   sweep->active_joint = -1;
@@ -29,7 +25,7 @@ static int joint_sweep_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
   }
 
   const arm_real_t per_joint_s = pulse_s + settle_s + pulse_s + settle_s;
-  const arm_real_t total_s = per_joint_s * (arm_real_t)sweep->dof;
+  const arm_real_t total_s = per_joint_s * ARM_REAL(sweep->dof);
 
   if (sweep->elapsed_s >= total_s) {
     sweep->complete = true;
@@ -78,9 +74,7 @@ static const arm_controller_vtable_t JOINT_SWEEP_VTABLE = {
 };
 
 void joint_sweep_init(joint_sweep_t *sweep, uint8_t dof, joint_sweep_params_t params) {
-  if (!sweep) {
-    return;
-  }
+  if (!sweep) return;
 
   sweep->dof = arm_sanitize_dof(dof);
   sweep->params = params;
@@ -88,9 +82,7 @@ void joint_sweep_init(joint_sweep_t *sweep, uint8_t dof, joint_sweep_params_t pa
 }
 
 void joint_sweep_reset(joint_sweep_t *sweep) {
-  if (!sweep) {
-    return;
-  }
+  if (!sweep) return;
   sweep->elapsed_s = ARM_REAL_ZERO;
   sweep->active_joint = -1;
   sweep->active_direction = 0;
@@ -98,11 +90,9 @@ void joint_sweep_reset(joint_sweep_t *sweep) {
 }
 
 arm_real_t joint_sweep_total_duration(const joint_sweep_t *sweep) {
-  if (!sweep) {
-    return ARM_REAL_ZERO;
-  }
-  return ((arm_real_t)2 * sweep->params.pulse_s + (arm_real_t)2 * sweep->params.settle_s) *
-         (arm_real_t)sweep->dof;
+  if (!sweep) return ARM_REAL_ZERO;
+  return (ARM_REAL(2) * sweep->params.pulse_s + ARM_REAL(2) * sweep->params.settle_s) *
+         ARM_REAL(sweep->dof);
 }
 
 arm_controller_t joint_sweep_as_controller(joint_sweep_t *sweep) {

@@ -12,7 +12,7 @@ int armsim_step_once(
     return ARM_ERR_NULL;
   }
 
-  mujoco_arm_read_state(data, arm, (arm_real_t)data->time, (arm_real_t)model->opt.timestep, &core->state);
+  mujoco_arm_read_state(data, arm, ARM_REAL(data->time), ARM_REAL(model->opt.timestep), &core->state);
   const int status = arm_control_step(core, ref, controller);
   if (status != ARM_OK) {
     return status;

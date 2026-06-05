@@ -6,7 +6,7 @@
 #include <mujoco/mujoco.h>
 
 #include "arm_core/arm_safety.h"
-#include "arm_core/joint_ref_planner.h"
+#include "arm_core/joint_ref_shaper.h"
 #include "arm_core/joint_pvi.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/default_arm_config.h"
@@ -36,9 +36,9 @@ typedef struct {
   mjrContext context;
 
   arm_t core;
-  arm_reference_t goal_ref;
-  arm_reference_t planned_ref;
-  joint_ref_planner_t planner;
+  arm_reference_t manual_goal_ref;
+  arm_reference_t control_ref;
+  joint_ref_shaper_t shaper;
   arm_safety_t safety;
   joint_pvi_t pvi;
   arm_controller_t controller;
@@ -128,25 +128,25 @@ static double clamp_joint_angle(const viewer_app_t *app, uint8_t joint, double a
 
 static void read_core_state(viewer_app_t *app) {
   mujoco_arm_read_state(
-      app->data, &app->arm, (arm_real_t)app->data->time, (arm_real_t)app->model->opt.timestep, &app->core.state);
+      app->data, &app->arm, ARM_REAL(app->data->time), ARM_REAL(app->model->opt.timestep), &app->core.state);
 }
 
 static void sync_sliders_from_target(viewer_app_t *app) {
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    app->slider_angle_rad[i] = (double)app->goal_ref.q_ref_rad[i];
+    app->slider_angle_rad[i] = (double)app->manual_goal_ref.q_ref_rad[i];
   }
 }
 
 static void sync_target_to_current_pose(viewer_app_t *app) {
   read_core_state(app);
-  arm_reference_zero(&app->goal_ref, app->core.config.dof);
-  app->goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  arm_reference_zero(&app->manual_goal_ref, app->core.config.dof);
+  app->manual_goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    app->goal_ref.q_ref_rad[i] = app->core.state.q_rad[i];
-    app->goal_ref.dq_ref_rad_s[i] = (arm_real_t)0;
+    app->manual_goal_ref.q_ref_rad[i] = app->core.state.q_rad[i];
+    app->manual_goal_ref.dq_ref_rad_s[i] = ARM_REAL_ZERO;
   }
-  joint_ref_planner_reset_to_state(&app->planner, &app->core.state);
-  (void)joint_ref_planner_step(&app->planner, &app->core.state, &app->goal_ref, &app->planned_ref);
+  joint_ref_shaper_reset_to_state(&app->shaper, &app->core.state);
+  (void)joint_ref_shaper_step(&app->shaper, &app->core.state, &app->manual_goal_ref, &app->control_ref);
   joint_pvi_reset(&app->pvi);
   sync_sliders_from_target(app);
 }
@@ -155,9 +155,9 @@ static void set_pose_joint_angle(viewer_app_t *app, uint8_t joint, double angle_
   const arm_joint_config_t *cfg = &app->core.config.joints[joint];
   const double clamped = clamp_joint_angle(app, joint, angle_rad);
   app->slider_angle_rad[joint] = clamped;
-  app->goal_ref.q_ref_rad[joint] = (arm_real_t)clamped;
-  app->goal_ref.dq_ref_rad_s[joint] = (arm_real_t)0;
-  app->goal_ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  app->manual_goal_ref.q_ref_rad[joint] = ARM_REAL(clamped);
+  app->manual_goal_ref.dq_ref_rad_s[joint] = ARM_REAL_ZERO;
+  app->manual_goal_ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   app->data->qpos[app->arm.joint_qpos_addr[joint]] =
       (mjtNum)((double)cfg->q_offset_rad + (double)cfg->sign * clamped);
 }
@@ -184,18 +184,18 @@ static void reset_viewer_state(viewer_app_t *app) {
   mj_resetData(app->model, app->data);
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     app->slider_angle_rad[i] = 0.0;
-    app->goal_ref.q_ref_rad[i] = (arm_real_t)0;
-    app->goal_ref.dq_ref_rad_s[i] = (arm_real_t)0;
+    app->manual_goal_ref.q_ref_rad[i] = ARM_REAL_ZERO;
+    app->manual_goal_ref.dq_ref_rad_s[i] = ARM_REAL_ZERO;
     set_pose_joint_angle(app, i, 0.0);
   }
-  app->goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  app->manual_goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   joint_pvi_reset(&app->pvi);
   armsim_impairment_reset(&app->impairment);
   zero_motion(app);
   mj_forward(app->model, app->data);
   read_core_state(app);
-  joint_ref_planner_reset_to_state(&app->planner, &app->core.state);
-  (void)joint_ref_planner_step(&app->planner, &app->core.state, &app->goal_ref, &app->planned_ref);
+  joint_ref_shaper_reset_to_state(&app->shaper, &app->core.state);
+  (void)joint_ref_shaper_step(&app->shaper, &app->core.state, &app->manual_goal_ref, &app->control_ref);
 }
 
 static void set_viewer_mode(viewer_app_t *app, viewer_mode_t mode) {
@@ -235,9 +235,9 @@ static void update_slider_from_mouse(viewer_app_t *app, int slider, double fb_x)
   const double t = clamp_double((fb_x - SLIDER_X) / (double)SLIDER_W, 0.0, 1.0);
   const double angle = low + t * (high - low);
   app->slider_angle_rad[slider] = angle;
-  app->goal_ref.q_ref_rad[slider] = (arm_real_t)angle;
-  app->goal_ref.dq_ref_rad_s[slider] = (arm_real_t)0;
-  app->goal_ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  app->manual_goal_ref.q_ref_rad[slider] = ARM_REAL(angle);
+  app->manual_goal_ref.dq_ref_rad_s[slider] = ARM_REAL_ZERO;
+  app->manual_goal_ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
 
   if (app->mode == VIEWER_MODE_POSE_EDIT) {
     set_pose_joint_angle(app, (uint8_t)slider, angle);
@@ -494,35 +494,35 @@ static void configure_pvi_defaults(viewer_app_t *app) {
   app->controller = joint_pvi_as_controller(&app->pvi);
 }
 
-static void configure_planner_and_safety(viewer_app_t *app) {
+static void configure_ref_shaper_and_safety(viewer_app_t *app) {
   static const arm_real_t dq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DQ_LIMITS_RAD_S;
   static const arm_real_t ddq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DDQ_LIMITS_RAD_S2;
 
-  joint_ref_planner_params_t planner_params = {0};
+  joint_ref_shaper_params_t shaper_params = {0};
   arm_safety_init(&app->safety, app->core.config.dof);
 
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     double low = 0.0;
     double high = 0.0;
     joint_limits(app, i, &low, &high);
-    planner_params.q_min_rad[i] = (arm_real_t)low;
-    planner_params.q_max_rad[i] = (arm_real_t)high;
-    planner_params.dq_limit_rad_s[i] = dq_limits[i];
-    planner_params.ddq_limit_rad_s2[i] = ddq_limits[i];
+    shaper_params.q_min_rad[i] = ARM_REAL(low);
+    shaper_params.q_max_rad[i] = ARM_REAL(high);
+    shaper_params.dq_limit_rad_s[i] = dq_limits[i];
+    shaper_params.ddq_limit_rad_s2[i] = ddq_limits[i];
 
     arm_safety_set_joint_params(
         &app->safety,
         i,
         (arm_safety_joint_params_t){
-            (arm_real_t)low,
-            (arm_real_t)high,
+            ARM_REAL(low),
+            ARM_REAL(high),
             ARMSIM_ARM6_SAFETY_Q_MARGIN_RAD,
             dq_limits[i] * ARMSIM_ARM6_SAFETY_DQ_LIMIT_SCALE,
             app->core.config.joints[i].torque_limit_nm,
         });
   }
 
-  joint_ref_planner_init(&app->planner, app->core.config.dof, &planner_params);
+  joint_ref_shaper_init(&app->shaper, app->core.config.dof, &shaper_params);
 }
 
 int main(int argc, char **argv) {
@@ -556,8 +556,8 @@ int main(int argc, char **argv) {
     mj_deleteModel(model);
     return EXIT_FAILURE;
   }
-  arm_reference_zero(&app.goal_ref, app.core.config.dof);
-  arm_reference_zero(&app.planned_ref, app.core.config.dof);
+  arm_reference_zero(&app.manual_goal_ref, app.core.config.dof);
+  arm_reference_zero(&app.control_ref, app.core.config.dof);
   app.active_slider = -1;
 
   char bind_error[256] = {0};
@@ -568,7 +568,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   configure_pvi_defaults(&app);
-  configure_planner_and_safety(&app);
+  configure_ref_shaper_and_safety(&app);
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   armsim_impairment_init(&app.impairment, &impairment_config, app.core.config.dof);
   apply_physics_options(&app);
@@ -618,9 +618,9 @@ int main(int argc, char **argv) {
       const mjtNum frame_start = data->time;
       while (data->time - frame_start < 1.0 / 60.0) {
         read_core_state(&app);
-        const int planner_status =
-            joint_ref_planner_step(&app.planner, &app.core.state, &app.goal_ref, &app.planned_ref);
-        if (planner_status != ARM_OK) {
+        const int shaper_status =
+            joint_ref_shaper_step(&app.shaper, &app.core.state, &app.manual_goal_ref, &app.control_ref);
+        if (shaper_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;
         }
@@ -630,12 +630,12 @@ int main(int argc, char **argv) {
                                           data,
                                           &app.arm,
                                           &app.core,
-                                          &app.planned_ref,
+                                          &app.control_ref,
                                           &app.safety,
                                           &app.controller,
                                           &app.impairment)
                                     : armsim_step_once(
-                                          model, data, &app.arm, &app.core, &app.planned_ref, &app.safety, &app.controller);
+                                          model, data, &app.arm, &app.core, &app.control_ref, &app.safety, &app.controller);
         if (step_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;

@@ -10,18 +10,20 @@ arm_real_t arm_clamp(arm_real_t value, arm_real_t min_value, arm_real_t max_valu
     min_value = max_value;
     max_value = tmp;
   }
-  if (value < min_value) {
-    return min_value;
-  }
-  if (value > max_value) {
-    return max_value;
-  }
+  if (value < min_value) return min_value;
+  if (value > max_value) return max_value;
   return value;
 }
 
+bool arm_dof_is_valid(uint8_t dof) {
+  return dof > 0u && dof <= ARM_DOF_MAX;
+}
+
+bool arm_dof_matches(uint8_t expected_dof, uint8_t actual_dof) {
+  return arm_dof_is_valid(expected_dof) && actual_dof == expected_dof;
+}
+
 uint8_t arm_sanitize_dof(uint8_t dof) {
-  if (dof > ARM_DOF_MAX) {
-    return ARM_DOF_MAX;
-  }
+  if (dof > ARM_DOF_MAX) return ARM_DOF_MAX;
   return dof;
 }

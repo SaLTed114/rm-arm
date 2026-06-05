@@ -23,4 +23,8 @@ if(ARMSIM_BUILD_TESTS)
   add_executable(test_core_types tests/test_core_types.c)
   target_link_libraries(test_core_types PRIVATE arm_core)
   add_test(NAME test_core_types COMMAND test_core_types)
+
+  add_executable(test_core_contract tests/test_core_contract.c)
+  target_link_libraries(test_core_contract PRIVATE arm_core)
+  add_test(NAME test_core_contract COMMAND test_core_contract)
 endif()

@@ -81,8 +81,8 @@ void mujoco_arm_read_state(
   for (uint8_t i = 0u; i < arm->dof; ++i) {
     const arm_joint_config_t *joint = &arm->config->joints[i];
     const arm_real_t sign = joint->sign;
-    state->q_rad[i] = sign * ((arm_real_t)data->qpos[arm->joint_qpos_addr[i]] - joint->q_offset_rad);
-    state->dq_rad_s[i] = sign * (arm_real_t)data->qvel[arm->joint_dof_addr[i]];
+    state->q_rad[i] = sign * (ARM_REAL(data->qpos[arm->joint_qpos_addr[i]]) - joint->q_offset_rad);
+    state->dq_rad_s[i] = sign * ARM_REAL(data->qvel[arm->joint_dof_addr[i]]);
   }
 }
 
@@ -98,7 +98,7 @@ void mujoco_arm_write_command(
   for (uint8_t i = 0u; i < dof; ++i) {
     const arm_joint_config_t *joint = &arm->config->joints[i];
     arm_real_t tau = command->tau_ff_nm[i];
-    if (joint->torque_limit_nm > (arm_real_t)0) {
+    if (joint->torque_limit_nm > ARM_REAL_ZERO) {
       tau = arm_clamp(tau, -joint->torque_limit_nm, joint->torque_limit_nm);
     }
     data->ctrl[arm->actuator_ids[i]] = (mjtNum)(joint->sign * tau);

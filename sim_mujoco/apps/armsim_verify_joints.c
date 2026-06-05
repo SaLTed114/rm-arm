@@ -26,7 +26,7 @@ static const char *default_model_path(void) {
 
 static void collect_mj_ctrl(const mjData *data, const mujoco_arm_t *arm, arm_real_t out[ARM_DOF_MAX]) {
   for (uint8_t i = 0u; i < arm->dof; ++i) {
-    out[i] = (arm_real_t)data->ctrl[arm->actuator_ids[i]];
+    out[i] = ARM_REAL(data->ctrl[arm->actuator_ids[i]]);
   }
 }
 
@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
   arm_real_t mj_ctrl[ARM_DOF_MAX] = {0};
   const arm_real_t duration_s = joint_sweep_total_duration(&sweep) + 0.1;
 
-  while ((arm_real_t)data->time < duration_s && !sweep.complete) {
+  while (ARM_REAL(data->time) < duration_s && !sweep.complete) {
     const int step_status = armsim_step_once(model, data, &arm, &core, &ref, NULL, &controller);
     if (step_status != ARM_OK) {
       fprintf(stderr, "Simulation step failed: %d\n", step_status);
