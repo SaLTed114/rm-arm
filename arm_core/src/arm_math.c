@@ -1,7 +1,7 @@
 #include "arm_core/arm_math.h"
 
 arm_real_t arm_abs(arm_real_t value) {
-  return value < (arm_real_t)0 ? -value : value;
+  return value < ARM_REAL_ZERO ? -value : value;
 }
 
 arm_real_t arm_clamp(arm_real_t value, arm_real_t min_value, arm_real_t max_value) {

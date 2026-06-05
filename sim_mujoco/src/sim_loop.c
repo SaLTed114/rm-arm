@@ -6,6 +6,7 @@ int armsim_step_once(
     const mujoco_arm_t *arm,
     arm_t *core,
     const arm_reference_t *ref,
+    const arm_safety_t *safety,
     arm_controller_t *controller) {
   if (!model || !data || !arm || !core) {
     return ARM_ERR_NULL;
@@ -15,6 +16,12 @@ int armsim_step_once(
   const int status = arm_control_step(core, ref, controller);
   if (status != ARM_OK) {
     return status;
+  }
+  if (safety) {
+    const int safety_status = arm_safety_apply(safety, &core->state, &core->command);
+    if (safety_status != ARM_OK) {
+      return safety_status;
+    }
   }
   mujoco_arm_write_command(data, arm, &core->command);
   mj_step(model, data);

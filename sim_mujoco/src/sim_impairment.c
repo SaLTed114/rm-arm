@@ -1,6 +1,7 @@
 #include "armsim/sim_impairment.h"
 
 #include "arm_core/arm_math.h"
+#include "armsim/arm6_sim_config.h"
 #include "armsim/sim_loop.h"
 
 static uint32_t rng_next(uint32_t *state) {
@@ -153,19 +154,19 @@ static void update_actuator_model(
 armsim_impairment_config_t armsim_impairment_default_config(void) {
   armsim_impairment_config_t config = {0};
   config.enabled = true;
-  config.control_period_s = (arm_real_t)0.002;
-  config.control_jitter_s = (arm_real_t)0.00025;
-  config.sensor_delay_steps = 2u;
-  config.encoder_resolution_rad = (arm_real_t)0.001;
-  config.q_noise_rad = (arm_real_t)0.00035;
-  config.dq_noise_rad_s = (arm_real_t)0.05;
-  config.tau_est_noise_nm = (arm_real_t)0.08;
+  config.control_period_s = ARMSIM_HARSH_CONTROL_PERIOD_S;
+  config.control_jitter_s = ARMSIM_HARSH_CONTROL_JITTER_S;
+  config.sensor_delay_steps = ARMSIM_HARSH_SENSOR_DELAY_STEPS;
+  config.encoder_resolution_rad = ARMSIM_HARSH_ENCODER_RESOLUTION_RAD;
+  config.q_noise_rad = ARMSIM_HARSH_Q_NOISE_RAD;
+  config.dq_noise_rad_s = ARMSIM_HARSH_DQ_NOISE_RAD_S;
+  config.tau_est_noise_nm = ARMSIM_HARSH_TAU_EST_NOISE_NM;
   config.use_dq_from_q_diff = true;
-  config.dq_filter_alpha = (arm_real_t)0.35;
-  config.actuator_tau_time_constant_s = (arm_real_t)0.006;
-  config.actuator_tau_rate_limit_nm_s = (arm_real_t)450.0;
-  config.actuator_deadband_nm = (arm_real_t)0.04;
-  config.random_seed = 0x12345678u;
+  config.dq_filter_alpha = ARMSIM_HARSH_DQ_FILTER_ALPHA;
+  config.actuator_tau_time_constant_s = ARMSIM_HARSH_ACTUATOR_TAU_TIME_CONSTANT_S;
+  config.actuator_tau_rate_limit_nm_s = ARMSIM_HARSH_ACTUATOR_TAU_RATE_LIMIT_NM_S;
+  config.actuator_deadband_nm = ARMSIM_HARSH_ACTUATOR_DEADBAND_NM;
+  config.random_seed = ARMSIM_HARSH_RANDOM_SEED;
   return config;
 }
 
@@ -211,10 +212,11 @@ int armsim_step_once_impaired(
     const mujoco_arm_t *arm,
     arm_t *core,
     const arm_reference_t *ref,
+    const arm_safety_t *safety,
     arm_controller_t *controller,
     armsim_impairment_t *impairment) {
   if (!impairment || !impairment->config.enabled) {
-    return armsim_step_once(model, data, arm, core, ref, controller);
+    return armsim_step_once(model, data, arm, core, ref, safety, controller);
   }
   if (!model || !data || !arm || !core) {
     return ARM_ERR_NULL;
@@ -238,6 +240,12 @@ int armsim_step_once_impaired(
     const int status = arm_control_step(core, ref, controller);
     if (status != ARM_OK) {
       return status;
+    }
+    if (safety) {
+      const int safety_status = arm_safety_apply(safety, &core->state, &core->command);
+      if (safety_status != ARM_OK) {
+        return safety_status;
+      }
     }
     for (uint8_t i = 0u; i < impairment->dof; ++i) {
       impairment->target_tau_nm[i] = core->command.tau_ff_nm[i];

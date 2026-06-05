@@ -23,7 +23,7 @@ static int joint_sweep_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
 
   const arm_real_t pulse_s = sweep->params.pulse_s;
   const arm_real_t settle_s = sweep->params.settle_s;
-  if (pulse_s <= (arm_real_t)0 || settle_s < (arm_real_t)0) {
+  if (pulse_s <= ARM_REAL_ZERO || settle_s < ARM_REAL_ZERO) {
     sweep->complete = true;
     return ARM_ERR_CONFIG;
   }
@@ -43,20 +43,20 @@ static int joint_sweep_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
     ++active_joint;
   }
 
-  arm_real_t tau = (arm_real_t)0;
+  arm_real_t tau = ARM_REAL_ZERO;
   if (local_t < pulse_s) {
     tau = sweep->params.torque_nm;
     sweep->active_direction = +1;
   } else if (local_t < pulse_s + settle_s) {
-    tau = (arm_real_t)0;
+    tau = ARM_REAL_ZERO;
   } else if (local_t < pulse_s + settle_s + pulse_s) {
     tau = -sweep->params.torque_nm;
     sweep->active_direction = -1;
   } else {
-    tau = (arm_real_t)0;
+    tau = ARM_REAL_ZERO;
   }
 
-  sweep->active_joint = (tau == (arm_real_t)0) ? -1 : (int16_t)active_joint;
+  sweep->active_joint = (tau == ARM_REAL_ZERO) ? -1 : (int16_t)active_joint;
   command->tau_ff_nm[active_joint] = tau;
   command->flags |= ARM_COMMAND_TAU_FF_VALID;
 
@@ -91,7 +91,7 @@ void joint_sweep_reset(joint_sweep_t *sweep) {
   if (!sweep) {
     return;
   }
-  sweep->elapsed_s = (arm_real_t)0;
+  sweep->elapsed_s = ARM_REAL_ZERO;
   sweep->active_joint = -1;
   sweep->active_direction = 0;
   sweep->complete = false;
@@ -99,7 +99,7 @@ void joint_sweep_reset(joint_sweep_t *sweep) {
 
 arm_real_t joint_sweep_total_duration(const joint_sweep_t *sweep) {
   if (!sweep) {
-    return (arm_real_t)0;
+    return ARM_REAL_ZERO;
   }
   return ((arm_real_t)2 * sweep->params.pulse_s + (arm_real_t)2 * sweep->params.settle_s) *
          (arm_real_t)sweep->dof;

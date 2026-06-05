@@ -5,7 +5,10 @@
 #include <GLFW/glfw3.h>
 #include <mujoco/mujoco.h>
 
+#include "arm_core/arm_safety.h"
+#include "arm_core/joint_ref_planner.h"
 #include "arm_core/joint_pvi.h"
+#include "armsim/arm6_sim_config.h"
 #include "armsim/default_arm_config.h"
 #include "armsim/mujoco_arm.h"
 #include "armsim/sim_impairment.h"
@@ -33,7 +36,10 @@ typedef struct {
   mjrContext context;
 
   arm_t core;
-  arm_reference_t ref;
+  arm_reference_t goal_ref;
+  arm_reference_t planned_ref;
+  joint_ref_planner_t planner;
+  arm_safety_t safety;
   joint_pvi_t pvi;
   arm_controller_t controller;
   armsim_impairment_t impairment;
@@ -127,18 +133,20 @@ static void read_core_state(viewer_app_t *app) {
 
 static void sync_sliders_from_target(viewer_app_t *app) {
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    app->slider_angle_rad[i] = (double)app->ref.q_ref_rad[i];
+    app->slider_angle_rad[i] = (double)app->goal_ref.q_ref_rad[i];
   }
 }
 
 static void sync_target_to_current_pose(viewer_app_t *app) {
   read_core_state(app);
-  arm_reference_zero(&app->ref, app->core.config.dof);
-  app->ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  arm_reference_zero(&app->goal_ref, app->core.config.dof);
+  app->goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    app->ref.q_ref_rad[i] = app->core.state.q_rad[i];
-    app->ref.dq_ref_rad_s[i] = (arm_real_t)0;
+    app->goal_ref.q_ref_rad[i] = app->core.state.q_rad[i];
+    app->goal_ref.dq_ref_rad_s[i] = (arm_real_t)0;
   }
+  joint_ref_planner_reset_to_state(&app->planner, &app->core.state);
+  (void)joint_ref_planner_step(&app->planner, &app->core.state, &app->goal_ref, &app->planned_ref);
   joint_pvi_reset(&app->pvi);
   sync_sliders_from_target(app);
 }
@@ -147,9 +155,9 @@ static void set_pose_joint_angle(viewer_app_t *app, uint8_t joint, double angle_
   const arm_joint_config_t *cfg = &app->core.config.joints[joint];
   const double clamped = clamp_joint_angle(app, joint, angle_rad);
   app->slider_angle_rad[joint] = clamped;
-  app->ref.q_ref_rad[joint] = (arm_real_t)clamped;
-  app->ref.dq_ref_rad_s[joint] = (arm_real_t)0;
-  app->ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  app->goal_ref.q_ref_rad[joint] = (arm_real_t)clamped;
+  app->goal_ref.dq_ref_rad_s[joint] = (arm_real_t)0;
+  app->goal_ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   app->data->qpos[app->arm.joint_qpos_addr[joint]] =
       (mjtNum)((double)cfg->q_offset_rad + (double)cfg->sign * clamped);
 }
@@ -176,16 +184,18 @@ static void reset_viewer_state(viewer_app_t *app) {
   mj_resetData(app->model, app->data);
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     app->slider_angle_rad[i] = 0.0;
-    app->ref.q_ref_rad[i] = (arm_real_t)0;
-    app->ref.dq_ref_rad_s[i] = (arm_real_t)0;
+    app->goal_ref.q_ref_rad[i] = (arm_real_t)0;
+    app->goal_ref.dq_ref_rad_s[i] = (arm_real_t)0;
     set_pose_joint_angle(app, i, 0.0);
   }
-  app->ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  app->goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   joint_pvi_reset(&app->pvi);
   armsim_impairment_reset(&app->impairment);
   zero_motion(app);
   mj_forward(app->model, app->data);
   read_core_state(app);
+  joint_ref_planner_reset_to_state(&app->planner, &app->core.state);
+  (void)joint_ref_planner_step(&app->planner, &app->core.state, &app->goal_ref, &app->planned_ref);
 }
 
 static void set_viewer_mode(viewer_app_t *app, viewer_mode_t mode) {
@@ -225,9 +235,9 @@ static void update_slider_from_mouse(viewer_app_t *app, int slider, double fb_x)
   const double t = clamp_double((fb_x - SLIDER_X) / (double)SLIDER_W, 0.0, 1.0);
   const double angle = low + t * (high - low);
   app->slider_angle_rad[slider] = angle;
-  app->ref.q_ref_rad[slider] = (arm_real_t)angle;
-  app->ref.dq_ref_rad_s[slider] = (arm_real_t)0;
-  app->ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  app->goal_ref.q_ref_rad[slider] = (arm_real_t)angle;
+  app->goal_ref.dq_ref_rad_s[slider] = (arm_real_t)0;
+  app->goal_ref.flags |= ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
 
   if (app->mode == VIEWER_MODE_POSE_EDIT) {
     set_pose_joint_angle(app, (uint8_t)slider, angle);
@@ -475,14 +485,44 @@ static void draw_panel(viewer_app_t *app, mjrRect viewport) {
 }
 
 static void configure_pvi_defaults(viewer_app_t *app) {
+  static const joint_pvi_params_t pvi_params[ARM_DEFAULT_DOF] = ARMSIM_ARM6_PVI_PARAMS;
+
   joint_pvi_init(&app->pvi, app->core.config.dof);
-  joint_pvi_set_params(&app->pvi, 0u, (joint_pvi_params_t){25.0, 4.0, 0.0, 0.0, 10.0});
-  joint_pvi_set_params(&app->pvi, 1u, (joint_pvi_params_t){120.0, 18.0, 0.0, 0.0, 40.0});
-  joint_pvi_set_params(&app->pvi, 2u, (joint_pvi_params_t){80.0, 14.0, 0.0, 0.0, 30.0});
-  joint_pvi_set_params(&app->pvi, 3u, (joint_pvi_params_t){8.0, 1.2, 0.0, 0.0, 8.0});
-  joint_pvi_set_params(&app->pvi, 4u, (joint_pvi_params_t){8.0, 1.2, 0.0, 0.0, 8.0});
-  joint_pvi_set_params(&app->pvi, 5u, (joint_pvi_params_t){4.0, 0.8, 0.0, 0.0, 8.0});
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    joint_pvi_set_params(&app->pvi, i, pvi_params[i]);
+  }
   app->controller = joint_pvi_as_controller(&app->pvi);
+}
+
+static void configure_planner_and_safety(viewer_app_t *app) {
+  static const arm_real_t dq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DQ_LIMITS_RAD_S;
+  static const arm_real_t ddq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DDQ_LIMITS_RAD_S2;
+
+  joint_ref_planner_params_t planner_params = {0};
+  arm_safety_init(&app->safety, app->core.config.dof);
+
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    double low = 0.0;
+    double high = 0.0;
+    joint_limits(app, i, &low, &high);
+    planner_params.q_min_rad[i] = (arm_real_t)low;
+    planner_params.q_max_rad[i] = (arm_real_t)high;
+    planner_params.dq_limit_rad_s[i] = dq_limits[i];
+    planner_params.ddq_limit_rad_s2[i] = ddq_limits[i];
+
+    arm_safety_set_joint_params(
+        &app->safety,
+        i,
+        (arm_safety_joint_params_t){
+            (arm_real_t)low,
+            (arm_real_t)high,
+            ARMSIM_ARM6_SAFETY_Q_MARGIN_RAD,
+            dq_limits[i] * ARMSIM_ARM6_SAFETY_DQ_LIMIT_SCALE,
+            app->core.config.joints[i].torque_limit_nm,
+        });
+  }
+
+  joint_ref_planner_init(&app->planner, app->core.config.dof, &planner_params);
 }
 
 int main(int argc, char **argv) {
@@ -516,7 +556,8 @@ int main(int argc, char **argv) {
     mj_deleteModel(model);
     return EXIT_FAILURE;
   }
-  arm_reference_zero(&app.ref, app.core.config.dof);
+  arm_reference_zero(&app.goal_ref, app.core.config.dof);
+  arm_reference_zero(&app.planned_ref, app.core.config.dof);
   app.active_slider = -1;
 
   char bind_error[256] = {0};
@@ -527,6 +568,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   configure_pvi_defaults(&app);
+  configure_planner_and_safety(&app);
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   armsim_impairment_init(&app.impairment, &impairment_config, app.core.config.dof);
   apply_physics_options(&app);
@@ -575,17 +617,25 @@ int main(int argc, char **argv) {
     if (app.mode == VIEWER_MODE_DYNAMIC) {
       const mjtNum frame_start = data->time;
       while (data->time - frame_start < 1.0 / 60.0) {
+        read_core_state(&app);
+        const int planner_status =
+            joint_ref_planner_step(&app.planner, &app.core.state, &app.goal_ref, &app.planned_ref);
+        if (planner_status != ARM_OK) {
+          glfwSetWindowShouldClose(window, GLFW_TRUE);
+          break;
+        }
         const int step_status = app.harsh_sim_enabled
                                     ? armsim_step_once_impaired(
                                           model,
                                           data,
                                           &app.arm,
                                           &app.core,
-                                          &app.ref,
+                                          &app.planned_ref,
+                                          &app.safety,
                                           &app.controller,
                                           &app.impairment)
                                     : armsim_step_once(
-                                          model, data, &app.arm, &app.core, &app.ref, &app.controller);
+                                          model, data, &app.arm, &app.core, &app.planned_ref, &app.safety, &app.controller);
         if (step_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;

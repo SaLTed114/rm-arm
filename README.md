@@ -4,7 +4,7 @@ ArmSim is split into a portable control core and a MuJoCo simulation harness.
 
 ## Layout
 
-- `control_core/`: pure C control interfaces and verification controller. This is the part intended to be synced into a Keil/STM32F4xx project.
+- `arm_core/`: pure C reusable arm core, including interfaces, planners, controllers, safety, and verification helpers. This is the part intended to be synced into a Keil/STM32F4xx project.
 - `sim_mujoco/`: MuJoCo adapters, placeholder model, viewer, headless verifier, and CSV logging.
 - `third_party/`: external PC-side dependencies such as MuJoCo and GLFW.
 - `reference/`: read-only reference code. It is not built or modified by this project.

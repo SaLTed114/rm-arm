@@ -1,5 +1,5 @@
-if(NOT TARGET arm_control_core)
-  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../control_core ${CMAKE_CURRENT_BINARY_DIR}/control_core)
+if(NOT TARGET arm_core)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../arm_core ${CMAKE_CURRENT_BINARY_DIR}/arm_core)
 endif()
 
 get_filename_component(ARMSIM_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -62,7 +62,7 @@ target_include_directories(armsim_mujoco
 
 target_link_libraries(armsim_mujoco
   PUBLIC
-    arm_control_core
+    arm_core
     mujoco::mujoco
 )
 

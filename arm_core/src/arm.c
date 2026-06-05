@@ -12,10 +12,10 @@ int arm_config_validate(const arm_config_t *config) {
 
   for (uint8_t i = 0u; i < config->dof; ++i) {
     const arm_joint_config_t *joint = &config->joints[i];
-    if (joint->sign == (arm_real_t)0) {
+    if (joint->sign == ARM_REAL_ZERO) {
       return ARM_ERR_CONFIG;
     }
-    if (joint->torque_limit_nm < (arm_real_t)0) {
+    if (joint->torque_limit_nm < ARM_REAL_ZERO) {
       return ARM_ERR_CONFIG;
     }
   }
@@ -73,14 +73,14 @@ void arm_state_zero(arm_state_t *state, uint8_t dof) {
   }
 
   state->dof = arm_sanitize_dof(dof);
-  state->time_s = (arm_real_t)0;
-  state->dt_s = (arm_real_t)0;
+  state->time_s = ARM_REAL_ZERO;
+  state->dt_s = ARM_REAL_ZERO;
   state->flags = 0u;
 
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
-    state->q_rad[i] = (arm_real_t)0;
-    state->dq_rad_s[i] = (arm_real_t)0;
-    state->tau_est_nm[i] = (arm_real_t)0;
+    state->q_rad[i] = ARM_REAL_ZERO;
+    state->dq_rad_s[i] = ARM_REAL_ZERO;
+    state->tau_est_nm[i] = ARM_REAL_ZERO;
   }
 }
 
@@ -93,11 +93,11 @@ void arm_command_zero(arm_command_t *command, uint8_t dof) {
   command->flags = 0u;
 
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
-    command->q_d_rad[i] = (arm_real_t)0;
-    command->dq_d_rad_s[i] = (arm_real_t)0;
-    command->kp[i] = (arm_real_t)0;
-    command->kd[i] = (arm_real_t)0;
-    command->tau_ff_nm[i] = (arm_real_t)0;
+    command->q_d_rad[i] = ARM_REAL_ZERO;
+    command->dq_d_rad_s[i] = ARM_REAL_ZERO;
+    command->kp[i] = ARM_REAL_ZERO;
+    command->kd[i] = ARM_REAL_ZERO;
+    command->tau_ff_nm[i] = ARM_REAL_ZERO;
   }
 }
 
@@ -110,9 +110,9 @@ void arm_reference_zero(arm_reference_t *ref, uint8_t dof) {
   ref->flags = 0u;
 
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
-    ref->q_ref_rad[i] = (arm_real_t)0;
-    ref->dq_ref_rad_s[i] = (arm_real_t)0;
-    ref->tau_ff_nm[i] = (arm_real_t)0;
+    ref->q_ref_rad[i] = ARM_REAL_ZERO;
+    ref->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+    ref->tau_ff_nm[i] = ARM_REAL_ZERO;
   }
 }
 
@@ -124,7 +124,7 @@ void arm_command_apply_limits(const arm_config_t *config, arm_command_t *command
   const uint8_t dof = config->dof < command->dof ? config->dof : command->dof;
   for (uint8_t i = 0u; i < dof; ++i) {
     const arm_real_t limit = config->joints[i].torque_limit_nm;
-    if (limit > (arm_real_t)0) {
+    if (limit > ARM_REAL_ZERO) {
       command->tau_ff_nm[i] = arm_clamp(command->tau_ff_nm[i], -limit, limit);
     }
   }

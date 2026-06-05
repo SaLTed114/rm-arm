@@ -24,21 +24,21 @@ static int joint_pvi_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
   for (uint8_t i = 0u; i < pvi->dof; ++i) {
     const joint_pvi_params_t *params = &pvi->params[i];
     const arm_real_t q_ref = (ref->flags & ARM_REFERENCE_Q_VALID) ? ref->q_ref_rad[i] : state->q_rad[i];
-    const arm_real_t dq_ref = (ref->flags & ARM_REFERENCE_DQ_VALID) ? ref->dq_ref_rad_s[i] : (arm_real_t)0;
-    const arm_real_t tau_ff = (ref->flags & ARM_REFERENCE_TAU_FF_VALID) ? ref->tau_ff_nm[i] : (arm_real_t)0;
+    const arm_real_t dq_ref = (ref->flags & ARM_REFERENCE_DQ_VALID) ? ref->dq_ref_rad_s[i] : ARM_REAL_ZERO;
+    const arm_real_t tau_ff = (ref->flags & ARM_REFERENCE_TAU_FF_VALID) ? ref->tau_ff_nm[i] : ARM_REAL_ZERO;
     const arm_real_t q_err = q_ref - state->q_rad[i];
     const arm_real_t dq_err = dq_ref - state->dq_rad_s[i];
 
-    if (params->ki != (arm_real_t)0 && state->dt_s > (arm_real_t)0) {
+    if (params->ki != ARM_REAL_ZERO && state->dt_s > ARM_REAL_ZERO) {
       pvi->integral_nm[i] += params->ki * q_err * state->dt_s;
-      if (params->integral_limit > (arm_real_t)0) {
+      if (params->integral_limit > ARM_REAL_ZERO) {
         pvi->integral_nm[i] =
             arm_clamp(pvi->integral_nm[i], -params->integral_limit, params->integral_limit);
       }
     }
 
     arm_real_t tau = params->kp * q_err + params->kv * dq_err + pvi->integral_nm[i] + tau_ff;
-    if (params->out_limit > (arm_real_t)0) {
+    if (params->out_limit > ARM_REAL_ZERO) {
       tau = arm_clamp(tau, -params->out_limit, params->out_limit);
     }
     command->tau_ff_nm[i] = tau;
@@ -65,7 +65,7 @@ void joint_pvi_init(joint_pvi_t *pvi, uint8_t dof) {
   pvi->dof = arm_sanitize_dof(dof);
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
     pvi->params[i] = (joint_pvi_params_t){0};
-    pvi->integral_nm[i] = (arm_real_t)0;
+    pvi->integral_nm[i] = ARM_REAL_ZERO;
   }
 }
 
@@ -75,7 +75,7 @@ void joint_pvi_reset(joint_pvi_t *pvi) {
   }
 
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
-    pvi->integral_nm[i] = (arm_real_t)0;
+    pvi->integral_nm[i] = ARM_REAL_ZERO;
   }
 }
 

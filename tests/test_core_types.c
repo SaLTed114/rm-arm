@@ -1,7 +1,9 @@
 #include <assert.h>
 #include <math.h>
 
+#include "arm_core/arm_safety.h"
 #include "arm_core/arm_control.h"
+#include "arm_core/joint_ref_planner.h"
 #include "arm_core/joint_pvi.h"
 #include "arm_core/joint_sweep.h"
 
@@ -75,6 +77,64 @@ int main(void) {
   joint_pvi_set_params(&pvi, 0u, (joint_pvi_params_t){10.0, 0.0, 0.0, 0.0, 10.0});
   assert(arm_control_step(&arm, &ref, &controller) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] == 1.5);
+
+  joint_ref_planner_params_t planner_params = {0};
+  for (uint8_t i = 0u; i < arm.config.dof; ++i) {
+    planner_params.q_min_rad[i] = -0.5;
+    planner_params.q_max_rad[i] = 0.5;
+    planner_params.dq_limit_rad_s[i] = 1.0;
+    planner_params.ddq_limit_rad_s2[i] = 2.0;
+    arm.state.q_rad[i] = 0.0;
+    arm.state.dq_rad_s[i] = 0.0;
+  }
+  arm.state.dt_s = 0.1;
+  arm.state.flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID;
+  joint_ref_planner_t planner;
+  joint_ref_planner_init(&planner, arm.config.dof, &planner_params);
+  joint_ref_planner_reset_to_state(&planner, &arm.state);
+
+  arm_reference_t goal_ref;
+  arm_reference_t planned_ref;
+  arm_reference_zero(&goal_ref, arm.config.dof);
+  goal_ref.flags = ARM_REFERENCE_Q_VALID;
+  goal_ref.q_ref_rad[0] = 2.0;
+  assert(joint_ref_planner_step(&planner, &arm.state, &goal_ref, &planned_ref) == ARM_OK);
+  assert(planner.q_goal_rad[0] == 0.5);
+  assert(planned_ref.dq_ref_rad_s[0] <= 0.2 + 1.0e-9);
+  assert(planned_ref.dq_ref_rad_s[0] <= 1.0 + 1.0e-9);
+  const arm_real_t first_dq = planned_ref.dq_ref_rad_s[0];
+  assert(joint_ref_planner_step(&planner, &arm.state, &goal_ref, &planned_ref) == ARM_OK);
+  assert(planned_ref.dq_ref_rad_s[0] - first_dq <= 0.2 + 1.0e-9);
+
+  arm_safety_t safety;
+  arm_safety_init(&safety, arm.config.dof);
+  for (uint8_t i = 0u; i < arm.config.dof; ++i) {
+    arm_safety_set_joint_params(&safety, i, (arm_safety_joint_params_t){-0.5, 0.5, 0.02, 1.0, 0.7});
+  }
+
+  arm_command_zero(&arm.command, arm.config.dof);
+  arm.command.tau_ff_nm[0] = 0.5;
+  arm.state.flags = 0u;
+  assert(arm_safety_apply(&safety, &arm.state, &arm.command) == ARM_OK);
+  assert(arm.command.tau_ff_nm[0] == 0.0);
+
+  arm.state.flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID;
+  arm.state.q_rad[0] = 0.0;
+  arm.state.dq_rad_s[0] = 0.0;
+  arm.command.tau_ff_nm[0] = 2.0;
+  assert(arm_safety_apply(&safety, &arm.state, &arm.command) == ARM_OK);
+  assert(arm.command.tau_ff_nm[0] == 0.7);
+
+  arm.state.q_rad[0] = 0.49;
+  arm.command.tau_ff_nm[0] = 0.5;
+  assert(arm_safety_apply(&safety, &arm.state, &arm.command) == ARM_OK);
+  assert(arm.command.tau_ff_nm[0] == 0.0);
+
+  arm.state.q_rad[0] = 0.0;
+  arm.state.dq_rad_s[0] = 1.2;
+  arm.command.tau_ff_nm[0] = 0.5;
+  assert(arm_safety_apply(&safety, &arm.state, &arm.command) == ARM_OK);
+  assert(arm.command.tau_ff_nm[0] == 0.0);
 
   return 0;
 }

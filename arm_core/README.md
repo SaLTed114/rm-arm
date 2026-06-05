@@ -1,6 +1,6 @@
-# control_core
+# arm_core
 
-`control_core` is the portable part intended for both MuJoCo simulation and
+`arm_core` is the portable part intended for both MuJoCo simulation and
 STM32F4xx/Keil firmware.
 
 Rules for this directory:
@@ -9,11 +9,16 @@ Rules for this directory:
 - No dynamic allocation.
 - Public headers live under `include/arm_core/`.
 - Platform code should keep one `arm_t`, update `arm.state` each control tick,
-  prepare an `arm_reference_t`, call `arm_control_step()`, and send
-  `arm.command` through the platform actuator adapter.
+  shape a goal into an `arm_reference_t`, call `arm_control_step()`, apply
+  final safety limits, and send `arm.command` through the platform actuator
+  adapter.
 - Controllers are plain C contexts adapted by `arm_controller_t`. `joint_pvi`
   is the current joint-space PVI/PD controller; `joint_sweep` is kept for
   channel verification.
+- `joint_ref_planner` is a simple joint-space reference shaper with position,
+  velocity, and acceleration limits.
+- `arm_safety` is a final command-side guard for invalid state, torque limits,
+  soft position limits, and overspeed protection.
 
 The active robot DOF is runtime-configured through `arm_config_t.dof`, with
 fixed arrays sized by `ARM_DOF_MAX`.

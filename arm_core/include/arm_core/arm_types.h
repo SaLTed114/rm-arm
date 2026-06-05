@@ -9,8 +9,16 @@
 
 #ifdef ARM_CORE_USE_FLOAT
 typedef float arm_real_t;
+#define ARM_REAL(value) ((arm_real_t)(value))
+#define ARM_REAL_ZERO 0.0f
+#define ARM_REAL_ONE 1.0f
+#define ARM_REAL_PI 3.14159265358979323846f
 #else
 typedef double arm_real_t;
+#define ARM_REAL(value) ((arm_real_t)(value))
+#define ARM_REAL_ZERO 0.0
+#define ARM_REAL_ONE 1.0
+#define ARM_REAL_PI 3.14159265358979323846
 #endif
 
 typedef enum {

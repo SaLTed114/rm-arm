@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
   const arm_real_t duration_s = joint_sweep_total_duration(&sweep) + 0.1;
 
   while ((arm_real_t)data->time < duration_s && !sweep.complete) {
-    const int step_status = armsim_step_once(model, data, &arm, &core, &ref, &controller);
+    const int step_status = armsim_step_once(model, data, &arm, &core, &ref, NULL, &controller);
     if (step_status != ARM_OK) {
       fprintf(stderr, "Simulation step failed: %d\n", step_status);
       csv_logger_close(&logger);
