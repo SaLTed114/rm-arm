@@ -7,6 +7,7 @@
 
 #include "arm_core/arm_safety.h"
 #include "arm_core/joint_ref_shaper.h"
+#include "arm_core/joint_state_filter.h"
 #include "arm_core/joint_pvi.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/default_arm_config.h"
@@ -39,10 +40,13 @@ typedef struct {
   arm_reference_t manual_goal_ref;
   arm_reference_t control_ref;
   joint_ref_shaper_t shaper;
+  joint_state_filter_t state_filter;
+  arm_state_t measured_state;
   arm_safety_t safety;
   joint_pvi_t pvi;
   arm_controller_t controller;
   armsim_impairment_t impairment;
+  FILE *debug_log;
 
   double slider_angle_rad[ARM_DOF_MAX];
   viewer_mode_t mode;
@@ -131,6 +135,74 @@ static void read_core_state(viewer_app_t *app) {
       app->data, &app->arm, ARM_REAL(app->data->time), ARM_REAL(app->model->opt.timestep), &app->core.state);
 }
 
+static void write_joint_columns(FILE *file, const char *prefix, const arm_real_t values[ARM_DOF_MAX], uint8_t dof) {
+  for (uint8_t i = 0u; i < dof; ++i) {
+    (void)fprintf(file, ",%s%u", prefix, (unsigned)(i + 1u));
+  }
+  (void)values;
+}
+
+static void write_joint_values(FILE *file, const arm_real_t values[ARM_DOF_MAX], uint8_t dof) {
+  for (uint8_t i = 0u; i < dof; ++i) {
+    (void)fprintf(file, ",%.9f", (double)values[i]);
+  }
+}
+
+static void debug_log_open(viewer_app_t *app) {
+  app->debug_log = fopen("logs/dynamic_debug.csv", "w");
+  if (!app->debug_log) {
+    return;
+  }
+
+  const uint8_t dof = app->core.config.dof;
+  (void)fprintf(app->debug_log, "time_s,harsh");
+  write_joint_columns(app->debug_log, "q_meas", app->measured_state.q_rad, dof);
+  write_joint_columns(app->debug_log, "dq_meas", app->measured_state.dq_rad_s, dof);
+  write_joint_columns(app->debug_log, "q_filt", app->core.state.q_rad, dof);
+  write_joint_columns(app->debug_log, "dq_filt", app->core.state.dq_rad_s, dof);
+  write_joint_columns(app->debug_log, "q_ref", app->control_ref.q_ref_rad, dof);
+  write_joint_columns(app->debug_log, "dq_ref", app->control_ref.dq_ref_rad_s, dof);
+  write_joint_columns(app->debug_log, "tau_cmd", app->core.command.tau_ff_nm, dof);
+  for (uint8_t i = 0u; i < dof; ++i) {
+    (void)fprintf(app->debug_log, ",mj_ctrl%u", (unsigned)(i + 1u));
+  }
+  (void)fprintf(app->debug_log, "\n");
+}
+
+static void debug_log_step(viewer_app_t *app) {
+  if (!app->debug_log) {
+    return;
+  }
+
+  const uint8_t dof = app->core.config.dof;
+  (void)fprintf(app->debug_log, "%.9f,%u", (double)app->data->time, app->harsh_sim_enabled ? 1u : 0u);
+  write_joint_values(app->debug_log, app->measured_state.q_rad, dof);
+  write_joint_values(app->debug_log, app->measured_state.dq_rad_s, dof);
+  write_joint_values(app->debug_log, app->core.state.q_rad, dof);
+  write_joint_values(app->debug_log, app->core.state.dq_rad_s, dof);
+  write_joint_values(app->debug_log, app->control_ref.q_ref_rad, dof);
+  write_joint_values(app->debug_log, app->control_ref.dq_ref_rad_s, dof);
+  write_joint_values(app->debug_log, app->core.command.tau_ff_nm, dof);
+  for (uint8_t i = 0u; i < dof; ++i) {
+    (void)fprintf(app->debug_log, ",%.9f", (double)app->data->ctrl[app->arm.actuator_ids[i]]);
+  }
+  (void)fprintf(app->debug_log, "\n");
+}
+
+static void debug_log_close(viewer_app_t *app) {
+  if (!app->debug_log) {
+    return;
+  }
+  fclose(app->debug_log);
+  app->debug_log = NULL;
+}
+
+static int read_filtered_core_state(viewer_app_t *app) {
+  mujoco_arm_read_state(
+      app->data, &app->arm, ARM_REAL(app->data->time), ARM_REAL(app->model->opt.timestep), &app->measured_state);
+  return joint_state_filter_step(&app->state_filter, &app->measured_state, &app->core.state);
+}
+
 static void sync_sliders_from_target(viewer_app_t *app) {
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     app->slider_angle_rad[i] = (double)app->manual_goal_ref.q_ref_rad[i];
@@ -146,6 +218,7 @@ static void sync_target_to_current_pose(viewer_app_t *app) {
     app->manual_goal_ref.dq_ref_rad_s[i] = ARM_REAL_ZERO;
   }
   joint_ref_shaper_reset_to_state(&app->shaper, &app->core.state);
+  joint_state_filter_reset_to_state(&app->state_filter, &app->core.state);
   (void)joint_ref_shaper_step(&app->shaper, &app->core.state, &app->manual_goal_ref, &app->control_ref);
   joint_pvi_reset(&app->pvi);
   sync_sliders_from_target(app);
@@ -195,6 +268,7 @@ static void reset_viewer_state(viewer_app_t *app) {
   mj_forward(app->model, app->data);
   read_core_state(app);
   joint_ref_shaper_reset_to_state(&app->shaper, &app->core.state);
+  joint_state_filter_reset_to_state(&app->state_filter, &app->core.state);
   (void)joint_ref_shaper_step(&app->shaper, &app->core.state, &app->manual_goal_ref, &app->control_ref);
 }
 
@@ -525,6 +599,13 @@ static void configure_ref_shaper_and_safety(viewer_app_t *app) {
   joint_ref_shaper_init(&app->shaper, app->core.config.dof, &shaper_params);
 }
 
+static void configure_state_filter(viewer_app_t *app) {
+  static const joint_state_filter_params_t filter_params[ARM_DEFAULT_DOF] = ARMSIM_ARM6_STATE_FILTER_PARAMS;
+
+  joint_state_filter_init(&app->state_filter, app->core.config.dof, filter_params);
+  arm_state_zero(&app->measured_state, app->core.config.dof);
+}
+
 int main(int argc, char **argv) {
   const char *model_path = argc > 1 ? argv[1] : default_model_path();
 
@@ -569,10 +650,12 @@ int main(int argc, char **argv) {
   }
   configure_pvi_defaults(&app);
   configure_ref_shaper_and_safety(&app);
+  configure_state_filter(&app);
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   armsim_impairment_init(&app.impairment, &impairment_config, app.core.config.dof);
   apply_physics_options(&app);
   reset_viewer_state(&app);
+  debug_log_open(&app);
 
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW.\n");
@@ -617,7 +700,13 @@ int main(int argc, char **argv) {
     if (app.mode == VIEWER_MODE_DYNAMIC) {
       const mjtNum frame_start = data->time;
       while (data->time - frame_start < 1.0 / 60.0) {
-        read_core_state(&app);
+        if (!app.harsh_sim_enabled) {
+          const int filter_status = read_filtered_core_state(&app);
+          if (filter_status != ARM_OK) {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            break;
+          }
+        }
         const int shaper_status =
             joint_ref_shaper_step(&app.shaper, &app.core.state, &app.manual_goal_ref, &app.control_ref);
         if (shaper_status != ARM_OK) {
@@ -625,7 +714,7 @@ int main(int argc, char **argv) {
           break;
         }
         const int step_status = app.harsh_sim_enabled
-                                    ? armsim_step_once_impaired(
+                                    ? armsim_step_once_impaired_filtered(
                                           model,
                                           data,
                                           &app.arm,
@@ -633,13 +722,23 @@ int main(int argc, char **argv) {
                                           &app.control_ref,
                                           &app.safety,
                                           &app.controller,
-                                          &app.impairment)
-                                    : armsim_step_once(
-                                          model, data, &app.arm, &app.core, &app.control_ref, &app.safety, &app.controller);
+                                          &app.impairment,
+                                          &app.state_filter,
+                                          &app.measured_state)
+                                    : armsim_step_once_with_state(
+                                          model,
+                                          data,
+                                          &app.arm,
+                                          &app.core,
+                                          &app.core.state,
+                                          &app.control_ref,
+                                          &app.safety,
+                                          &app.controller);
         if (step_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;
         }
+        debug_log_step(&app);
       }
       read_core_state(&app);
     } else {
@@ -662,6 +761,7 @@ int main(int argc, char **argv) {
 
   mjr_freeContext(&app.context);
   mjv_freeScene(&app.scene);
+  debug_log_close(&app);
   glfwDestroyWindow(window);
   glfwTerminate();
   mj_deleteData(data);

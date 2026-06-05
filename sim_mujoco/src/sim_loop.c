@@ -12,7 +12,25 @@ int armsim_step_once(
     return ARM_ERR_NULL;
   }
 
-  mujoco_arm_read_state(data, arm, ARM_REAL(data->time), ARM_REAL(model->opt.timestep), &core->state);
+  arm_state_t state;
+  mujoco_arm_read_state(data, arm, ARM_REAL(data->time), ARM_REAL(model->opt.timestep), &state);
+  return armsim_step_once_with_state(model, data, arm, core, &state, ref, safety, controller);
+}
+
+int armsim_step_once_with_state(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_state_t *state,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *controller) {
+  if (!model || !data || !arm || !core || !state) {
+    return ARM_ERR_NULL;
+  }
+
+  core->state = *state;
   const int status = arm_control_step(core, ref, controller);
   if (status != ARM_OK) {
     return status;

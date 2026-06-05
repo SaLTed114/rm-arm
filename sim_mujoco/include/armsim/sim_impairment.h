@@ -6,6 +6,7 @@
 
 #include "arm_core/arm_control.h"
 #include "arm_core/arm_safety.h"
+#include "arm_core/joint_state_filter.h"
 #include "armsim/mujoco_arm.h"
 
 #define ARMSIM_IMPAIRMENT_DELAY_MAX 16u
@@ -59,5 +60,16 @@ int armsim_step_once_impaired(
     const arm_safety_t *safety,
     arm_controller_t *controller,
     armsim_impairment_t *impairment);
+int armsim_step_once_impaired_filtered(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *controller,
+    armsim_impairment_t *impairment,
+    joint_state_filter_t *state_filter,
+    arm_state_t *measured_state);
 
 #endif

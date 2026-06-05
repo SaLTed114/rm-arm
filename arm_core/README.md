@@ -8,6 +8,9 @@ Rules for this directory:
 - No MuJoCo, GLFW, HAL, FreeRTOS, stdio, or filesystem dependencies.
 - No dynamic allocation.
 - Public headers live under `include/arm_core/`.
+- Source files are grouped internally under `src/core`, `src/controllers`,
+  `src/estimation`, `src/reference`, and `src/safety`; this
+  does not change public include paths.
 - Host-side tests live outside this directory. A future Keil sync script should
   run the tests first, then copy only the approved `arm_core/include` and
   `arm_core/src` files.
@@ -18,6 +21,8 @@ Rules for this directory:
 - Controllers are plain C contexts adapted by `arm_controller_t`. `joint_pvi`
   is the current joint-space PVI/PD controller; `joint_sweep` is kept for
   channel verification.
+- `joint_state_filter` is a simple estimation layer for normalized measured
+  state. Platform adapters should not hide heavy filtering outside the core.
 - `joint_ref_shaper` is a simple joint-space reference conditioner for
   manual/teleop-style targets, with position, velocity, and acceleration
   limits.
@@ -72,6 +77,9 @@ before calling core logic:
 - `time_s` and `dt_s` are seconds. `dt_s` should be the current control period.
 - Validity flags state which measurements are usable. Safety requires position
   and velocity valid before allowing torque output.
+- Platform adapters should do unit conversion, direction mapping, zero offset,
+  timestamps, and validity checks. Filtering or estimation should be explicit in
+  `arm_core`, for example through `joint_state_filter`.
 
 `arm_reference_t` is the per-cycle controller target. It is produced by exactly
 one active reference source:
@@ -105,3 +113,23 @@ dq_raw_target = sign * dq_d_core
 For a pure torque controller, the platform adapter should send `tau_raw` and
 leave actuator-side position and velocity gains disabled unless a future command
 mode explicitly enables them.
+
+## Bring-Up Principle
+
+Real-arm bring-up should unlock capability in stages instead of starting with
+the full controller:
+
+1. Read only: confirm feedback, timing, joint order, and encoder stability.
+2. Input mapping: verify `q/dq/tau_est` signs, zero offsets, and ranges in core
+   convention.
+3. Low torque probe: command one joint at a time with small, short torque pulses
+   and confirm response direction and channel isolation.
+4. Low gain hold: hold the current pose with small limits and safety enabled.
+5. Slow tracking: move through shaped low-speed joint targets.
+6. Full controller: enable stronger controllers, compensation, trajectory, or
+   teleoperation only after the earlier stages are reliable.
+
+This repository does not implement real-arm bring-up procedures yet. Those
+should be added after the real adapter exists, because driver enable states,
+emergency stop, brakes, fault codes, and communication behavior are hardware
+facts that should shape the final procedure.

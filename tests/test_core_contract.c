@@ -3,6 +3,7 @@
 
 #include "arm_core/arm.h"
 #include "arm_core/arm_math.h"
+#include "arm_core/joint_state_filter.h"
 
 static int near(arm_real_t lhs, arm_real_t rhs) {
   return fabs((double)(lhs - rhs)) < 1.0e-9;
@@ -142,10 +143,65 @@ static void test_math_contract(void) {
   assert(ARM_REAL_PI > ARM_REAL(3.0));
 }
 
+static void test_state_filter_contract(void) {
+  joint_state_filter_params_t params[ARM_DOF_MAX] = {0};
+  params[0].q_time_constant_s = ARM_REAL_ZERO;
+  params[0].dq_time_constant_s = ARM_REAL(0.1);
+  params[0].use_dq_from_q_diff = false;
+
+  joint_state_filter_t filter;
+  joint_state_filter_init(&filter, 1u, params);
+
+  arm_state_t measured;
+  arm_state_zero(&measured, 1u);
+  measured.dt_s = ARM_REAL(0.1);
+  measured.flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID;
+  measured.q_rad[0] = ARM_REAL(1.0);
+  measured.dq_rad_s[0] = ARM_REAL_ZERO;
+  joint_state_filter_reset_to_state(&filter, &measured);
+
+  arm_state_t filtered;
+  assert(joint_state_filter_step(&filter, &measured, &filtered) == ARM_OK);
+  assert(near(filtered.q_rad[0], ARM_REAL(1.0)));
+  assert(near(filtered.dq_rad_s[0], ARM_REAL_ZERO));
+  assert(filtered.flags == (ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID));
+
+  measured.q_rad[0] = ARM_REAL(2.0);
+  measured.dq_rad_s[0] = ARM_REAL(10.0);
+  assert(joint_state_filter_step(&filter, &measured, &filtered) == ARM_OK);
+  assert(near(filtered.q_rad[0], ARM_REAL(2.0)));
+  assert(near(filtered.dq_rad_s[0], ARM_REAL(5.0)));
+
+  params[0].dq_time_constant_s = ARM_REAL_ZERO;
+  params[0].use_dq_from_q_diff = true;
+  joint_state_filter_init(&filter, 1u, params);
+  arm_state_zero(&measured, 1u);
+  measured.dt_s = ARM_REAL(0.1);
+  measured.flags = ARM_STATE_Q_VALID;
+  measured.q_rad[0] = ARM_REAL_ZERO;
+  joint_state_filter_reset_to_state(&filter, &measured);
+  measured.q_rad[0] = ARM_REAL(0.2);
+  assert(joint_state_filter_step(&filter, &measured, &filtered) == ARM_OK);
+  assert(filtered.flags == (ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID));
+  assert(near(filtered.dq_rad_s[0], ARM_REAL(2.0)));
+
+  params[0].use_dq_from_q_diff = false;
+  joint_state_filter_init(&filter, 1u, params);
+  arm_state_zero(&measured, 1u);
+  measured.dt_s = ARM_REAL(0.1);
+  measured.flags = ARM_STATE_Q_VALID;
+  measured.q_rad[0] = ARM_REAL(0.3);
+  assert(joint_state_filter_step(&filter, &measured, &filtered) == ARM_OK);
+  assert(filtered.flags == ARM_STATE_Q_VALID);
+  assert(near(filtered.q_rad[0], ARM_REAL(0.3)));
+  assert(near(filtered.dq_rad_s[0], ARM_REAL_ZERO));
+}
+
 int main(void) {
   test_config_contract();
   test_zero_helpers_contract();
   test_command_limit_contract();
   test_math_contract();
+  test_state_filter_contract();
   return 0;
 }

@@ -215,8 +215,37 @@ int armsim_step_once_impaired(
     const arm_safety_t *safety,
     arm_controller_t *controller,
     armsim_impairment_t *impairment) {
+  return armsim_step_once_impaired_filtered(
+      model, data, arm, core, ref, safety, controller, impairment, NULL, NULL);
+}
+
+int armsim_step_once_impaired_filtered(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *controller,
+    armsim_impairment_t *impairment,
+    joint_state_filter_t *state_filter,
+    arm_state_t *measured_state) {
   if (!impairment || !impairment->config.enabled) {
-    return armsim_step_once(model, data, arm, core, ref, safety, controller);
+    if (!state_filter) {
+      return armsim_step_once(model, data, arm, core, ref, safety, controller);
+    }
+    if (!model || !data || !arm || !core) {
+      return ARM_ERR_NULL;
+    }
+    arm_state_t local_measured;
+    arm_state_t filtered;
+    arm_state_t *measured = measured_state ? measured_state : &local_measured;
+    mujoco_arm_read_state(data, arm, ARM_REAL(data->time), ARM_REAL(model->opt.timestep), measured);
+    const int filter_status = joint_state_filter_step(state_filter, measured, &filtered);
+    if (filter_status != ARM_OK) {
+      return filter_status;
+    }
+    return armsim_step_once_with_state(model, data, arm, core, &filtered, ref, safety, controller);
   }
   if (!model || !data || !arm || !core) {
     return ARM_ERR_NULL;
@@ -234,8 +263,21 @@ int armsim_step_once_impaired(
     const arm_real_t dt_s = impairment->has_control_time ? time_s - impairment->last_control_time_s
                                                          : impairment->config.control_period_s;
     const arm_state_t *delayed = delayed_state(impairment);
-    build_measured_state(impairment, delayed, dt_s > ARM_REAL_ZERO ? dt_s : impairment->config.control_period_s,
-                         &core->state);
+    arm_state_t local_measured;
+    arm_state_t filtered;
+    arm_state_t *measured = measured_state ? measured_state : &local_measured;
+    build_measured_state(
+        impairment, delayed, dt_s > ARM_REAL_ZERO ? dt_s : impairment->config.control_period_s, measured);
+
+    if (state_filter) {
+      const int filter_status = joint_state_filter_step(state_filter, measured, &filtered);
+      if (filter_status != ARM_OK) {
+        return filter_status;
+      }
+      core->state = filtered;
+    } else {
+      core->state = *measured;
+    }
 
     const int status = arm_control_step(core, ref, controller);
     if (status != ARM_OK) {

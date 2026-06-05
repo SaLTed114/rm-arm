@@ -15,5 +15,14 @@ int armsim_step_once(
     const arm_reference_t *ref,
     const arm_safety_t *safety,
     arm_controller_t *controller);
+int armsim_step_once_with_state(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_state_t *state,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *controller);
 
 #endif

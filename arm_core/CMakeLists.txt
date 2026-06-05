@@ -1,11 +1,12 @@
 add_library(arm_core STATIC
-  src/arm.c
-  src/arm_control.c
-  src/arm_math.c
-  src/arm_safety.c
-  src/joint_ref_shaper.c
-  src/joint_pvi.c
-  src/joint_sweep.c
+  src/core/arm.c
+  src/core/arm_control.c
+  src/core/arm_math.c
+  src/controllers/joint_pvi.c
+  src/controllers/joint_sweep.c
+  src/estimation/joint_state_filter.c
+  src/reference/joint_ref_shaper.c
+  src/safety/arm_safety.c
 )
 
 option(ARM_CORE_USE_FLOAT "Use float as arm_real_t instead of double" OFF)
