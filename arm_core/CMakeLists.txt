@@ -6,6 +6,7 @@ add_library(arm_core STATIC
   src/estimation/joint_state_filter.c
   src/feedforward/joint_gravity_ff.c
   src/feedforward/joint_id_fit_ff.c
+  src/output/arm_output_limiter.c
   src/safety/arm_safety.c
 )
 

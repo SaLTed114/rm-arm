@@ -19,16 +19,16 @@ joints:
 control:
   pd:
     - { kp: 18.0, kd: 2.5, out_limit: 4.0 }
-    - { kp: 48.0, kd: 11.0, out_limit: 11.0 }
-    - { kp: 38.0, kd: 8.5, out_limit: 9.5 }
+    - { kp: 36.0, kd: 8.0, out_limit: 7.0 }
+    - { kp: 30.0, kd: 6.5, out_limit: 6.5 }
     - { kp: 6.0, kd: 0.8, out_limit: 3.0 }
     - { kp: 18.0, kd: 2.4, out_limit: 6.0 }
     - { kp: 3.0, kd: 0.5, out_limit: 2.0 }
 
   reference:
-    dq_limits_rad_s: [0.75, 0.5, 0.7, 2.0, 3.0, 3.8]
-    ddq_limits_rad_s2: [2.0, 1.2, 1.8, 10.0, 16.0, 22.0]
-    dddq_limits_rad_s3: [2.5, 1.5, 2.0, 60.0, 90.0, 130.0]
+    dq_limits_rad_s: [0.25, 0.5, 0.7, 2.0, 3.0, 3.8]
+    ddq_limits_rad_s2: [0.5, 1.2, 1.8, 10.0, 16.0, 22.0]
+    dddq_limits_rad_s3: [0.8, 1.5, 2.0, 60.0, 90.0, 130.0]
 
   state_filter:
     - { q_time_constant_s: 0.0, dq_time_constant_s: 0.012, use_dq_from_q_diff: false }
@@ -37,6 +37,9 @@ control:
     - { q_time_constant_s: 0.0, dq_time_constant_s: 0.010, use_dq_from_q_diff: false }
     - { q_time_constant_s: 0.0, dq_time_constant_s: 0.010, use_dq_from_q_diff: false }
     - { q_time_constant_s: 0.0, dq_time_constant_s: 0.010, use_dq_from_q_diff: false }
+
+  output_limiter:
+    tau_rate_limits_nm_s: [4000.0, 4000.0, 4000.0, 4000.0, 4000.0, 4000.0]
 
   safety:
     q_margin_rad: 0.04

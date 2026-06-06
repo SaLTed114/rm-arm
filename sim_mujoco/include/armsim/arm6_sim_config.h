@@ -3,6 +3,7 @@
 #define ARMSIM_ARM6_SIM_CONFIG_H_
 
 #include "arm_core/joint_gravity_ff.h"
+#include "arm_core/arm_output_limiter.h"
 #include "arm_motion/joint_kinematics.h"
 #include "arm_common/arm_types.h"
 
@@ -12,21 +13,21 @@
 #define ARMSIM_ARM6_PD_PARAMS \
   { \
     { ARM_REAL(18), ARM_REAL(2.5), ARM_REAL(4) }, \
-    { ARM_REAL(48), ARM_REAL(11), ARM_REAL(11) }, \
-    { ARM_REAL(38), ARM_REAL(8.5), ARM_REAL(9.5) }, \
+    { ARM_REAL(36), ARM_REAL(8), ARM_REAL(7) }, \
+    { ARM_REAL(30), ARM_REAL(6.5), ARM_REAL(6.5) }, \
     { ARM_REAL(6), ARM_REAL(0.8), ARM_REAL(3) }, \
     { ARM_REAL(18), ARM_REAL(2.4), ARM_REAL(6) }, \
     { ARM_REAL(3), ARM_REAL(0.5), ARM_REAL(2) } \
   }
 
 #define ARMSIM_ARM6_DQ_LIMITS_RAD_S \
-  { ARM_REAL(0.75), ARM_REAL(0.5), ARM_REAL(0.7), ARM_REAL(2), ARM_REAL(3), ARM_REAL(3.8) }
+  { ARM_REAL(0.25), ARM_REAL(0.5), ARM_REAL(0.7), ARM_REAL(2), ARM_REAL(3), ARM_REAL(3.8) }
 
 #define ARMSIM_ARM6_DDQ_LIMITS_RAD_S2 \
-  { ARM_REAL(2), ARM_REAL(1.2), ARM_REAL(1.8), ARM_REAL(10), ARM_REAL(16), ARM_REAL(22) }
+  { ARM_REAL(0.5), ARM_REAL(1.2), ARM_REAL(1.8), ARM_REAL(10), ARM_REAL(16), ARM_REAL(22) }
 
 #define ARMSIM_ARM6_DDDQ_LIMITS_RAD_S3 \
-  { ARM_REAL(2.5), ARM_REAL(1.5), ARM_REAL(2), ARM_REAL(60), ARM_REAL(90), ARM_REAL(130) }
+  { ARM_REAL(0.8), ARM_REAL(1.5), ARM_REAL(2), ARM_REAL(60), ARM_REAL(90), ARM_REAL(130) }
 
 #define ARMSIM_ARM6_STATE_FILTER_PARAMS \
   { \
@@ -36,6 +37,16 @@
     { ARM_REAL_ZERO, ARM_REAL(0.01), false }, \
     { ARM_REAL_ZERO, ARM_REAL(0.01), false }, \
     { ARM_REAL_ZERO, ARM_REAL(0.01), false } \
+  }
+
+#define ARMSIM_ARM6_OUTPUT_LIMITER_PARAMS \
+  { \
+    { ARM_REAL(4000) }, \
+    { ARM_REAL(4000) }, \
+    { ARM_REAL(4000) }, \
+    { ARM_REAL(4000) }, \
+    { ARM_REAL(4000) }, \
+    { ARM_REAL(4000) } \
   }
 
 #define ARMSIM_ARM6_GRAVITY_FF_PARAMS \

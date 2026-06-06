@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
 
   while (ARM_REAL(data->time) < duration_s) {
     const int status = armsim_step_once_impaired_filtered_with_feedforward(
-        model, data, &arm, &core, &ref, &safety, &ctrl, &ff, &impairment, &filter, &measured);
+        model, data, &arm, &core, &ref, &safety, &ctrl, &ff, NULL, &impairment, &filter, &measured);
     if (status != ARM_OK) {
       fprintf(stderr, "Harsh hold step failed: %d\n", status);
       mj_deleteData(data);

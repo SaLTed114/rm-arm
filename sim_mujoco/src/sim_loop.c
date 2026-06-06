@@ -52,6 +52,21 @@ int armsim_step_once_with_state_and_feedforward(
     const arm_safety_t *safety,
     arm_controller_t *ctrl,
     arm_feedforward_t *ff) {
+  return armsim_step_once_with_state_feedforward_and_output_limiter(
+      model, data, arm, core, state, ref, safety, ctrl, ff, NULL);
+}
+
+int armsim_step_once_with_state_feedforward_and_output_limiter(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    arm_t *core,
+    const arm_state_t *state,
+    const arm_reference_t *ref,
+    const arm_safety_t *safety,
+    arm_controller_t *ctrl,
+    arm_feedforward_t *ff,
+    arm_output_limiter_t *output_limiter) {
   if (!model || !data || !arm || !core || !state) {
     return ARM_ERR_NULL;
   }
@@ -65,6 +80,12 @@ int armsim_step_once_with_state_and_feedforward(
     const int safety_status = arm_safety_apply(safety, &core->state, &core->command);
     if (safety_status != ARM_OK) {
       return safety_status;
+    }
+  }
+  if (output_limiter) {
+    const int limiter_status = arm_output_limiter_apply(output_limiter, &core->state, &core->command);
+    if (limiter_status != ARM_OK) {
+      return limiter_status;
     }
   }
   mujoco_arm_write_command(data, arm, &core->command);

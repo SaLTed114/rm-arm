@@ -53,6 +53,7 @@ typedef struct {
   joint_state_filter_t state_filter;
   arm_state_t measured_state;
   arm_safety_t safety;
+  arm_output_limiter_t output_limiter;
   joint_pd_t pd;
   arm_controller_t ctrl;
   joint_gravity_ff_t gravity_ff;
@@ -327,6 +328,16 @@ static void configure_state_filter(benchmark_app_t *app, const arm_state_t *init
   arm_state_zero(&app->measured_state, app->core.config.dof);
 }
 
+static void configure_output_limiter(benchmark_app_t *app) {
+  static const arm_output_limiter_joint_params_t output_limiter_params[ARM_DEFAULT_DOF] =
+      ARMSIM_ARM6_OUTPUT_LIMITER_PARAMS;
+
+  arm_output_limiter_init(&app->output_limiter, app->core.config.dof);
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    arm_output_limiter_set_joint_params(&app->output_limiter, i, output_limiter_params[i]);
+  }
+}
+
 static void configure_gravity_ff(benchmark_app_t *app) {
   static const joint_gravity_ff_params_t gravity_params = ARMSIM_ARM6_GRAVITY_FF_PARAMS;
 
@@ -464,6 +475,7 @@ static int load_app(benchmark_app_t *app, const char *model_path) {
   app->ctrl = joint_pd_as_controller(&app->pd);
   configure_ref_shaper_and_safety(app);
   configure_state_filter(app, &app->core.state);
+  configure_output_limiter(app);
   configure_gravity_ff(app);
   status = configure_inverse_dynamics_ff(app);
   if (status != ARM_OK) return status;
@@ -596,6 +608,7 @@ int main(int argc, char **argv) {
         &app.safety,
         &app.ctrl,
         active_feedforward(&app),
+        &app.output_limiter,
         &app.impairment,
         &app.state_filter,
         &app.measured_state);

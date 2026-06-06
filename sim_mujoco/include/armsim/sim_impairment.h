@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "arm_core/arm_control.h"
+#include "arm_core/arm_output_limiter.h"
 #include "arm_core/arm_safety.h"
 #include "arm_core/joint_state_filter.h"
 #include "armsim/mujoco_arm.h"
@@ -80,6 +81,7 @@ int armsim_step_once_impaired_filtered_with_feedforward(
     const arm_safety_t *safety,
     arm_controller_t *ctrl,
     arm_feedforward_t *ff,
+    arm_output_limiter_t *output_limiter,
     armsim_impairment_t *impairment,
     joint_state_filter_t *state_filter,
     arm_state_t *measured_state);

@@ -6,6 +6,7 @@
 #include "arm_core/arm_feedforward.h"
 #include "arm_common/arm_math.h"
 #include "arm_core/joint_id_fit_ff.h"
+#include "arm_core/arm_output_limiter.h"
 #include "arm_core/joint_pd.h"
 #include "arm_core/joint_sweep.h"
 
@@ -143,6 +144,27 @@ int main(void) {
   arm.command.tau_ff_nm[0] = 0.5;
   assert(arm_safety_apply(&safety, &arm.state, &arm.command) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] == 0.0);
+
+  arm_output_limiter_t output_limiter;
+  arm_output_limiter_init(&output_limiter, arm.config.dof);
+  arm_output_limiter_set_joint_params(
+      &output_limiter, 0u, (arm_output_limiter_joint_params_t){ARM_REAL(100.0)});
+  arm_command_zero(&arm.command, arm.config.dof);
+  arm.state.dof = arm.config.dof;
+  arm.state.dt_s = ARM_REAL(0.01);
+  arm.command.tau_ff_nm[0] = ARM_REAL(2.0);
+  assert(arm_output_limiter_apply(&output_limiter, &arm.state, &arm.command) == ARM_OK);
+  assert(near_zero(arm.command.tau_ff_nm[0] - ARM_REAL(1.0)));
+
+  arm.command.tau_ff_nm[0] = ARM_REAL(-2.0);
+  assert(arm_output_limiter_apply(&output_limiter, &arm.state, &arm.command) == ARM_OK);
+  assert(near_zero(arm.command.tau_ff_nm[0]));
+
+  arm.command.tau_ff_nm[0] = ARM_REAL(0.4);
+  arm_output_limiter_reset_to_command(&output_limiter, &arm.command);
+  arm.command.tau_ff_nm[0] = ARM_REAL(0.5);
+  assert(arm_output_limiter_apply(&output_limiter, &arm.state, &arm.command) == ARM_OK);
+  assert(near_zero(arm.command.tau_ff_nm[0] - ARM_REAL(0.5)));
 
   joint_id_fit_ff_params_t fit_params = {0};
   fit_params.dof = arm.config.dof;

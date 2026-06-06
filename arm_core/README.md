@@ -9,7 +9,7 @@ Rules for this directory:
 - No dynamic allocation.
 - Public headers live under `include/arm_core/`.
 - Source files are grouped internally under `src/core`, `src/controllers`,
-  `src/estimation`, `src/feedforward`, and `src/safety`; this
+  `src/estimation`, `src/feedforward`, `src/output`, and `src/safety`; this
   does not change public include paths.
 - Shared scalar types, DOF constants, status values, and math helpers live in
   sibling module `arm_common`.
@@ -32,6 +32,9 @@ Rules for this directory:
   evaluates generated fitted inverse-dynamics coefficients.
 - `arm_safety` is a final command-side guard for invalid state, torque limits,
   soft position limits, and overspeed protection.
+- `arm_output_limiter` is an optional command-side output conditioning block.
+  It currently rate-limits final `tau_ff_nm` before the actuator adapter, and
+  should run after safety if enabled.
 - Control performance metrics and log analysis live in PC-side `tools/`.
   Firmware or simulation code only needs to emit compatible samples; metric
   calculation is intentionally kept out of `arm_core`.
@@ -109,6 +112,8 @@ before calling core logic:
   such as MIT-style actuator targets.
 - `arm_limit_command()` and `arm_safety_apply()` protect the final command side;
   they do not replace reference shaping or trajectory generation.
+- Optional output conditioning such as `arm_output_limiter_apply()` belongs
+  after safety and before the platform actuator adapter.
 
 Adapter mapping formulas:
 

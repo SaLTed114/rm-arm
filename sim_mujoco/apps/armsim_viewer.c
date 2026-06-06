@@ -51,6 +51,7 @@ typedef struct {
   joint_state_filter_t state_filter;
   arm_state_t measured_state;
   arm_safety_t safety;
+  arm_output_limiter_t output_limiter;
   joint_pd_t pd;
   arm_controller_t controller;
   joint_gravity_ff_t gravity_ff;
@@ -322,6 +323,7 @@ static void sync_target_to_current_pose(viewer_app_t *app) {
   }
   joint_ref_shaper_reset_to_state(&app->shaper, &app->core.state);
   joint_state_filter_reset_to_state(&app->state_filter, &app->core.state);
+  arm_output_limiter_reset(&app->output_limiter);
   (void)joint_ref_shaper_step(&app->shaper, &app->core.state, &app->manual_goal_ref, &app->control_ref);
   joint_pd_reset(&app->pd);
   (void)update_tool_target_from_state(app, &app->core.state);
@@ -369,6 +371,7 @@ static void reset_viewer_state(viewer_app_t *app) {
   app->manual_goal_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
   joint_pd_reset(&app->pd);
   armsim_impairment_reset(&app->impairment);
+  arm_output_limiter_reset(&app->output_limiter);
   zero_motion(app);
   mj_forward(app->model, app->data);
   read_core_state(app);
@@ -388,6 +391,7 @@ static void set_viewer_mode(viewer_app_t *app, viewer_mode_t mode) {
   if (mode == VIEWER_MODE_DYNAMIC) {
     sync_target_to_current_pose(app);
     armsim_impairment_reset(&app->impairment);
+    arm_output_limiter_reset(&app->output_limiter);
   } else {
     sync_target_to_current_pose(app);
     apply_pose_edit(app);
@@ -872,6 +876,16 @@ static void configure_state_filter(viewer_app_t *app) {
   arm_state_zero(&app->measured_state, app->core.config.dof);
 }
 
+static void configure_output_limiter(viewer_app_t *app) {
+  static const arm_output_limiter_joint_params_t output_limiter_params[ARM_DEFAULT_DOF] =
+      ARMSIM_ARM6_OUTPUT_LIMITER_PARAMS;
+
+  arm_output_limiter_init(&app->output_limiter, app->core.config.dof);
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    arm_output_limiter_set_joint_params(&app->output_limiter, i, output_limiter_params[i]);
+  }
+}
+
 static void configure_gravity_ff(viewer_app_t *app) {
   static const joint_gravity_ff_params_t gravity_params = ARMSIM_ARM6_GRAVITY_FF_PARAMS;
 
@@ -943,6 +957,7 @@ int main(int argc, char **argv) {
   configure_pd_defaults(&app);
   configure_ref_shaper_and_safety(&app);
   configure_state_filter(&app);
+  configure_output_limiter(&app);
   configure_gravity_ff(&app);
   if (configure_inverse_dynamics_ff(&app) != ARM_OK) {
     fprintf(stderr, "Failed to initialize inverse dynamics feedforward.\n");
@@ -1019,6 +1034,7 @@ int main(int argc, char **argv) {
           break;
         }
         arm_feedforward_t *feedforward = active_feedforward(&app);
+        app.impairment.config.enabled = app.harsh_sim_enabled;
         const int step_status = app.harsh_sim_enabled
                                     ? armsim_step_once_impaired_filtered_with_feedforward(
                                           model,
@@ -1029,10 +1045,11 @@ int main(int argc, char **argv) {
                                           &app.safety,
                                           &app.controller,
                                           feedforward,
+                                          &app.output_limiter,
                                           &app.impairment,
                                           &app.state_filter,
                                           &app.measured_state)
-                                    : armsim_step_once_with_state_and_feedforward(
+                                    : armsim_step_once_with_state_feedforward_and_output_limiter(
                                           model,
                                           data,
                                           &app.arm,
@@ -1041,7 +1058,8 @@ int main(int argc, char **argv) {
                                           &app.control_ref,
                                           &app.safety,
                                           &app.controller,
-                                          feedforward);
+                                          feedforward,
+                                          &app.output_limiter);
         if (step_status != ARM_OK) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;

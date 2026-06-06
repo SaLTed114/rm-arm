@@ -231,7 +231,7 @@ int armsim_step_once_impaired_filtered(
     joint_state_filter_t *state_filter,
     arm_state_t *measured_state) {
   return armsim_step_once_impaired_filtered_with_feedforward(
-      model, data, arm, core, ref, safety, ctrl, NULL, impairment, state_filter, measured_state);
+      model, data, arm, core, ref, safety, ctrl, NULL, NULL, impairment, state_filter, measured_state);
 }
 
 int armsim_step_once_impaired_filtered_with_feedforward(
@@ -243,11 +243,12 @@ int armsim_step_once_impaired_filtered_with_feedforward(
     const arm_safety_t *safety,
     arm_controller_t *ctrl,
     arm_feedforward_t *ff,
+    arm_output_limiter_t *output_limiter,
     armsim_impairment_t *impairment,
     joint_state_filter_t *state_filter,
     arm_state_t *measured_state) {
   if (!impairment || !impairment->config.enabled) {
-    if (!state_filter) {
+    if (!state_filter && !output_limiter) {
       return armsim_step_once_with_feedforward(model, data, arm, core, ref, safety, ctrl, ff);
     }
     if (!model || !data || !arm || !core) {
@@ -257,12 +258,30 @@ int armsim_step_once_impaired_filtered_with_feedforward(
     arm_state_t filtered;
     arm_state_t *measured = measured_state ? measured_state : &local_measured;
     mujoco_arm_read_state(data, arm, ARM_REAL(data->time), ARM_REAL(model->opt.timestep), measured);
-    const int filter_status = joint_state_filter_step(state_filter, measured, &filtered);
-    if (filter_status != ARM_OK) {
-      return filter_status;
+
+    const arm_state_t *control_state = measured;
+    if (state_filter) {
+      const int filter_status = joint_state_filter_step(state_filter, measured, &filtered);
+      if (filter_status != ARM_OK) {
+        return filter_status;
+      }
+      control_state = &filtered;
     }
-    return armsim_step_once_with_state_and_feedforward(
-        model, data, arm, core, &filtered, ref, safety, ctrl, ff);
+
+    core->state = *control_state;
+    const int status = arm_control_step_with_feedforward(core, ref, ctrl, ff);
+    if (status != ARM_OK) return status;
+    if (safety) {
+      const int safety_status = arm_safety_apply(safety, &core->state, &core->command);
+      if (safety_status != ARM_OK) return safety_status;
+    }
+    if (output_limiter) {
+      const int limiter_status = arm_output_limiter_apply(output_limiter, &core->state, &core->command);
+      if (limiter_status != ARM_OK) return limiter_status;
+    }
+    mujoco_arm_write_command(data, arm, &core->command);
+    mj_step(model, data);
+    return ARM_OK;
   }
   if (!model || !data || !arm || !core) {
     return ARM_ERR_NULL;
@@ -304,6 +323,12 @@ int armsim_step_once_impaired_filtered_with_feedforward(
       const int safety_status = arm_safety_apply(safety, &core->state, &core->command);
       if (safety_status != ARM_OK) {
         return safety_status;
+      }
+    }
+    if (output_limiter) {
+      const int limiter_status = arm_output_limiter_apply(output_limiter, &core->state, &core->command);
+      if (limiter_status != ARM_OK) {
+        return limiter_status;
       }
     }
     for (uint8_t i = 0u; i < impairment->dof; ++i) {

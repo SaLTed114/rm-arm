@@ -278,6 +278,7 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
         "#define ARMSIM_ARM6_SIM_CONFIG_H_",
         "",
         '#include "arm_core/joint_gravity_ff.h"',
+        '#include "arm_core/arm_output_limiter.h"',
         '#include "arm_motion/joint_kinematics.h"',
         '#include "arm_common/arm_types.h"',
         "",
@@ -323,6 +324,19 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
     for index, row in enumerate(filter_rows):
         suffix = " \\" if index != len(filter_rows) - 1 else " \\"
         comma = "," if index != len(filter_rows) - 1 else ""
+        lines.append(f"{row}{comma}{suffix}")
+    output_limiter_rows = []
+    for rate_limit in control["output_limiter"]["tau_rate_limits_nm_s"]:
+        output_limiter_rows.append(f"    {{ {c_real(rate_limit)} }}")
+    lines.extend([
+        "  }",
+        "",
+        "#define ARMSIM_ARM6_OUTPUT_LIMITER_PARAMS \\",
+        "  { \\",
+    ])
+    for index, row in enumerate(output_limiter_rows):
+        suffix = " \\" if index != len(output_limiter_rows) - 1 else " \\"
+        comma = "," if index != len(output_limiter_rows) - 1 else ""
         lines.append(f"{row}{comma}{suffix}")
     body_rows = []
     for body in gravity_bodies(config):
