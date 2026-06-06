@@ -16,6 +16,7 @@
 #include "arm_core/joint_gravity_ff.h"
 #include "arm_core/joint_pd.h"
 #include "arm_core/joint_state_filter.h"
+#include "arm_motion/joint_kinematics.h"
 #include "arm_motion/joint_ref_shaper.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/control_log.h"
@@ -24,6 +25,9 @@
 #include "armsim/mujoco_inverse_dynamics_ff.h"
 #include "armsim/sim_impairment.h"
 #include "armsim/sim_loop.h"
+
+#define BENCHMARK_TRAIL_MAX 360
+#define BENCHMARK_TRAIL_DT_S 0.02
 
 typedef enum {
   SCENARIO_HOLD_ZERO_HARSH = 0,
@@ -34,6 +38,13 @@ typedef enum {
   SCENARIO_STRAIGHT_ARM_LIFT_HARSH = 5,
   SCENARIO_NEAR_LIMIT_J2_HARSH = 6,
   SCENARIO_FLOOR_BLOCKED_HARSH = 7,
+  SCENARIO_TOOL_CIRCLE_XY_HARSH = 8,
+  SCENARIO_TOOL_CIRCLE_XZ_HARSH = 9,
+  SCENARIO_TOOL_CIRCLE_YZ_HARSH = 10,
+  SCENARIO_TOOL_SQUARE_XY_HARSH = 11,
+  SCENARIO_TOOL_SQUARE_XZ_HARSH = 12,
+  SCENARIO_TOOL_SQUARE_YZ_HARSH = 13,
+  SCENARIO_TOOL_INSERT_LINE_HARSH = 14,
 } benchmark_scenario_t;
 
 typedef enum {
@@ -60,6 +71,11 @@ typedef struct {
   arm_feedforward_t ff;
   mujoco_inverse_dynamics_ff_t inverse_dyn_ff;
   arm_feedforward_t inverse_dyn_feedforward;
+  joint_kinematics_params_t kinematics;
+  arm_real_t initial_q_rad[ARM_DOF_MAX];
+  arm_real_t initial_tool_pos[3];
+  arm_real_t tool_target_pos[3];
+  bool tool_target_valid;
   benchmark_ff_mode_t ff_mode;
   armsim_impairment_t impairment;
   control_log_t log;
@@ -76,6 +92,10 @@ typedef struct {
   mjvScene scene;
   mjrContext context;
   mjtNum next_render_time;
+  mjtNum next_trail_time;
+  int trail_count;
+  mjtNum actual_trail[BENCHMARK_TRAIL_MAX][3];
+  mjtNum target_trail[BENCHMARK_TRAIL_MAX][3];
 #endif
 } benchmark_gui_t;
 
@@ -101,6 +121,20 @@ static const char *scenario_name(benchmark_scenario_t scenario) {
       return "near_limit_j2_harsh";
     case SCENARIO_FLOOR_BLOCKED_HARSH:
       return "floor_blocked_harsh";
+    case SCENARIO_TOOL_CIRCLE_XY_HARSH:
+      return "tool_circle_xy_harsh";
+    case SCENARIO_TOOL_CIRCLE_XZ_HARSH:
+      return "tool_circle_xz_harsh";
+    case SCENARIO_TOOL_CIRCLE_YZ_HARSH:
+      return "tool_circle_yz_harsh";
+    case SCENARIO_TOOL_SQUARE_XY_HARSH:
+      return "tool_square_xy_harsh";
+    case SCENARIO_TOOL_SQUARE_XZ_HARSH:
+      return "tool_square_xz_harsh";
+    case SCENARIO_TOOL_SQUARE_YZ_HARSH:
+      return "tool_square_yz_harsh";
+    case SCENARIO_TOOL_INSERT_LINE_HARSH:
+      return "tool_insert_line_harsh";
     default:
       return "unknown";
   }
@@ -140,6 +174,34 @@ static int parse_scenario(const char *name, benchmark_scenario_t *scenario) {
     *scenario = SCENARIO_FLOOR_BLOCKED_HARSH;
     return ARM_OK;
   }
+  if (strcmp(name, "tool_circle_xy_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_CIRCLE_XY_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "tool_circle_xz_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_CIRCLE_XZ_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "tool_circle_yz_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_CIRCLE_YZ_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "tool_square_xy_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_SQUARE_XY_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "tool_square_xz_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_SQUARE_XZ_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "tool_square_yz_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_SQUARE_YZ_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "tool_insert_line_harsh") == 0) {
+    *scenario = SCENARIO_TOOL_INSERT_LINE_HARSH;
+    return ARM_OK;
+  }
   return ARM_ERR_CONFIG;
 }
 
@@ -154,6 +216,48 @@ static int parse_on_off(const char *name, bool *enabled) {
     return ARM_OK;
   }
   return ARM_ERR_CONFIG;
+}
+
+static bool scenario_uses_tool_path(benchmark_scenario_t scenario) {
+  return scenario == SCENARIO_TOOL_CIRCLE_XY_HARSH ||
+         scenario == SCENARIO_TOOL_CIRCLE_XZ_HARSH ||
+         scenario == SCENARIO_TOOL_CIRCLE_YZ_HARSH ||
+         scenario == SCENARIO_TOOL_SQUARE_XY_HARSH ||
+         scenario == SCENARIO_TOOL_SQUARE_XZ_HARSH ||
+         scenario == SCENARIO_TOOL_SQUARE_YZ_HARSH ||
+         scenario == SCENARIO_TOOL_INSERT_LINE_HARSH;
+}
+
+static void set_initial_joint_pose(
+    const mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    const arm_real_t q_rad[ARM_DOF_MAX]) {
+  for (uint8_t i = 0u; i < arm->config->dof; ++i) {
+    const arm_joint_config_t *cfg = &arm->config->joints[i];
+    data->qpos[arm->joint_qpos_addr[i]] = (mjtNum)(cfg->q_offset_rad + cfg->sign * q_rad[i]);
+  }
+  for (int i = 0; i < model->nv; ++i) {
+    data->qvel[i] = 0.0;
+  }
+  for (int i = 0; i < model->nu; ++i) {
+    data->ctrl[i] = 0.0;
+  }
+}
+
+static void configure_initial_pose_for_scenario(
+    mjModel *model,
+    mjData *data,
+    const mujoco_arm_t *arm,
+    benchmark_scenario_t scenario) {
+  arm_real_t q_rad[ARM_DOF_MAX] = {0};
+  if (scenario_uses_tool_path(scenario)) {
+    q_rad[1] = ARM_REAL(-0.65);
+    q_rad[2] = ARM_REAL(0.85);
+    q_rad[4] = ARM_REAL(-0.20);
+  }
+  set_initial_joint_pose(model, data, arm, q_rad);
+  mj_forward(model, data);
 }
 
 static int benchmark_gui_init(benchmark_gui_t *gui, const benchmark_app_t *app, bool enabled) {
@@ -191,6 +295,8 @@ static int benchmark_gui_init(benchmark_gui_t *gui, const benchmark_app_t *app, 
   gui->camera.lookat[1] = 0.0;
   gui->camera.lookat[2] = 0.20;
   gui->next_render_time = 0.0;
+  gui->next_trail_time = 0.0;
+  gui->trail_count = 0;
   gui->enabled = true;
   return ARM_OK;
 #else
@@ -209,9 +315,76 @@ static bool benchmark_gui_should_stop(const benchmark_gui_t *gui) {
 #endif
 }
 
+static void benchmark_gui_push_trail_point(benchmark_gui_t *gui, const arm_real_t actual[3], const arm_real_t target[3]) {
+#if defined(ARMSIM_BENCHMARK_WITH_GUI)
+  if (!gui) return;
+  if (gui->trail_count >= BENCHMARK_TRAIL_MAX) {
+    for (int i = 1; i < BENCHMARK_TRAIL_MAX; ++i) {
+      for (uint8_t axis = 0u; axis < 3u; ++axis) {
+        gui->actual_trail[i - 1][axis] = gui->actual_trail[i][axis];
+        gui->target_trail[i - 1][axis] = gui->target_trail[i][axis];
+      }
+    }
+    gui->trail_count = BENCHMARK_TRAIL_MAX - 1;
+  }
+  const int index = gui->trail_count++;
+  for (uint8_t axis = 0u; axis < 3u; ++axis) {
+    gui->actual_trail[index][axis] = (mjtNum)actual[axis];
+    gui->target_trail[index][axis] = (mjtNum)target[axis];
+  }
+#else
+  (void)gui;
+  (void)actual;
+  (void)target;
+#endif
+}
+
+static void benchmark_gui_record_trail(benchmark_gui_t *gui, const benchmark_app_t *app) {
+#if defined(ARMSIM_BENCHMARK_WITH_GUI)
+  if (!gui || !gui->enabled || !app || !app->tool_target_valid) return;
+  if (app->data->time + 1.0e-12 < gui->next_trail_time) return;
+
+  arm_real_t actual[3];
+  if (joint_kinematics_fk_position(&app->kinematics, &app->core.state, actual) != ARM_OK) return;
+  benchmark_gui_push_trail_point(gui, actual, app->tool_target_pos);
+  gui->next_trail_time = app->data->time + BENCHMARK_TRAIL_DT_S;
+#else
+  (void)gui;
+  (void)app;
+#endif
+}
+
+static void benchmark_gui_draw_trail(
+    mjvScene *scene,
+    const mjtNum trail[BENCHMARK_TRAIL_MAX][3],
+    int count,
+    const float rgba[4],
+    double width) {
+#if defined(ARMSIM_BENCHMARK_WITH_GUI)
+  if (!scene || count < 2) return;
+  for (int i = 1; i < count; ++i) {
+    if (scene->ngeom >= scene->maxgeom) return;
+    mjvGeom *line = &scene->geoms[scene->ngeom++];
+    mjv_initGeom(line, mjGEOM_LINE, NULL, NULL, NULL, rgba);
+    mjv_connector(line, mjGEOM_LINE, width, trail[i - 1], trail[i]);
+    line->rgba[0] = rgba[0];
+    line->rgba[1] = rgba[1];
+    line->rgba[2] = rgba[2];
+    line->rgba[3] = rgba[3];
+  }
+#else
+  (void)scene;
+  (void)trail;
+  (void)count;
+  (void)rgba;
+  (void)width;
+#endif
+}
+
 static void benchmark_gui_render(benchmark_gui_t *gui, const benchmark_app_t *app) {
 #if defined(ARMSIM_BENCHMARK_WITH_GUI)
   if (!gui || !gui->enabled || !app || !app->model || !app->data) return;
+  benchmark_gui_record_trail(gui, app);
   if (app->data->time + 1.0e-12 < gui->next_render_time) return;
 
   int width = 0;
@@ -220,6 +393,10 @@ static void benchmark_gui_render(benchmark_gui_t *gui, const benchmark_app_t *ap
   const mjrRect viewport = {0, 0, width, height};
 
   mjv_updateScene(app->model, app->data, &gui->option, NULL, &gui->camera, mjCAT_ALL, &gui->scene);
+  const float target_rgba[4] = {0.15f, 0.82f, 0.95f, 0.90f};
+  const float actual_rgba[4] = {1.00f, 0.55f, 0.18f, 0.95f};
+  benchmark_gui_draw_trail(&gui->scene, gui->target_trail, gui->trail_count, target_rgba, 3.0);
+  benchmark_gui_draw_trail(&gui->scene, gui->actual_trail, gui->trail_count, actual_rgba, 4.0);
   mjr_render(viewport, &gui->scene, &gui->context);
   glfwSwapBuffers(gui->window);
   glfwPollEvents();
@@ -352,6 +529,23 @@ static int configure_inverse_dynamics_ff(benchmark_app_t *app) {
   return ARM_OK;
 }
 
+static void configure_kinematics(benchmark_app_t *app) {
+  static const joint_kinematics_params_t kinematics_params = ARMSIM_ARM6_KINEMATICS_PARAMS;
+
+  app->kinematics = kinematics_params;
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    app->initial_q_rad[i] = ARM_REAL_ZERO;
+  }
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    app->initial_q_rad[i] = app->core.state.q_rad[i];
+  }
+  if (joint_kinematics_fk_position(&app->kinematics, &app->core.state, app->initial_tool_pos) != ARM_OK) {
+    arm_vec3_zero(app->initial_tool_pos);
+  }
+  arm_vec3_copy(app->initial_tool_pos, app->tool_target_pos);
+  app->tool_target_valid = false;
+}
+
 static void set_initial_reference(benchmark_app_t *app, const arm_state_t *state) {
   arm_reference_zero(&app->manual_goal_ref, app->core.config.dof);
   arm_reference_zero(&app->active_ref, app->core.config.dof);
@@ -364,9 +558,135 @@ static void set_initial_reference(benchmark_app_t *app, const arm_state_t *state
   (void)joint_ref_shaper_step(&app->shaper, state, &app->manual_goal_ref, &app->active_ref);
 }
 
-static void update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
+static bool circle_plane_axes(benchmark_scenario_t scenario, uint8_t *axis_a, uint8_t *axis_b) {
+  if (!axis_a || !axis_b) return false;
+  if (scenario == SCENARIO_TOOL_CIRCLE_XY_HARSH) {
+    *axis_a = 0u;
+    *axis_b = 1u;
+    return true;
+  }
+  if (scenario == SCENARIO_TOOL_CIRCLE_XZ_HARSH) {
+    *axis_a = 0u;
+    *axis_b = 2u;
+    return true;
+  }
+  if (scenario == SCENARIO_TOOL_CIRCLE_YZ_HARSH) {
+    *axis_a = 1u;
+    *axis_b = 2u;
+    return true;
+  }
+  return false;
+}
+
+static bool square_plane_axes(benchmark_scenario_t scenario, uint8_t *axis_a, uint8_t *axis_b) {
+  if (!axis_a || !axis_b) return false;
+  if (scenario == SCENARIO_TOOL_SQUARE_XY_HARSH) {
+    *axis_a = 0u;
+    *axis_b = 1u;
+    return true;
+  }
+  if (scenario == SCENARIO_TOOL_SQUARE_XZ_HARSH) {
+    *axis_a = 0u;
+    *axis_b = 2u;
+    return true;
+  }
+  if (scenario == SCENARIO_TOOL_SQUARE_YZ_HARSH) {
+    *axis_a = 1u;
+    *axis_b = 2u;
+    return true;
+  }
+  return false;
+}
+
+static void square_plane_target(
+    const arm_real_t center[3],
+    uint8_t axis_a,
+    uint8_t axis_b,
+    arm_real_t half_size_m,
+    arm_real_t phase,
+    arm_real_t target[3]) {
+  arm_vec3_copy(center, target);
+  const arm_real_t p = phase - ARM_REAL(4) * ARM_REAL((int)(phase / ARM_REAL(4)));
+  if (p < ARM_REAL_ONE) {
+    target[axis_a] += half_size_m * (ARM_REAL_ONE - ARM_REAL(2) * p);
+    target[axis_b] += half_size_m;
+  } else if (p < ARM_REAL(2)) {
+    target[axis_a] -= half_size_m;
+    target[axis_b] += half_size_m * (ARM_REAL_ONE - ARM_REAL(2) * (p - ARM_REAL_ONE));
+  } else if (p < ARM_REAL(3)) {
+    target[axis_a] += half_size_m * (-ARM_REAL_ONE + ARM_REAL(2) * (p - ARM_REAL(2)));
+    target[axis_b] -= half_size_m;
+  } else {
+    target[axis_a] += half_size_m;
+    target[axis_b] += half_size_m * (-ARM_REAL_ONE + ARM_REAL(2) * (p - ARM_REAL(3)));
+  }
+}
+
+static int solve_tool_target(benchmark_app_t *app, const arm_real_t target[3]) {
+  joint_ik_position_options_t options = {
+      24u,
+      ARM_REAL(0.035),
+      ARM_REAL(0.10),
+      ARM_REAL(0.0025),
+      app->initial_q_rad,
+      ARM_REAL(0.015),
+  };
+  const int status =
+      joint_ik_position_solve(&app->kinematics, &app->core.state, target, &options, &app->manual_goal_ref);
+  if (status == ARM_OK) {
+    arm_vec3_copy(target, app->tool_target_pos);
+    app->tool_target_valid = true;
+  }
+  return status;
+}
+
+static int update_tool_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
+  const arm_real_t start_s = ARM_REAL(0.8);
+  arm_real_t t = time_s - start_s;
+  if (t < ARM_REAL_ZERO) t = ARM_REAL_ZERO;
+
+  arm_real_t target[3];
+  arm_vec3_copy(app->initial_tool_pos, target);
+
+  uint8_t axis_a = 0u;
+  uint8_t axis_b = 2u;
+  if (circle_plane_axes(scenario, &axis_a, &axis_b)) {
+    const arm_real_t radius = ARM_REAL(0.080);
+    const arm_real_t omega = ARM_REAL(2) * ARM_REAL_PI / ARM_REAL(3.2);
+    const arm_real_t theta = omega * t;
+    target[axis_a] = app->initial_tool_pos[axis_a] - radius + radius * ARM_REAL(cos((double)theta));
+    target[axis_b] = app->initial_tool_pos[axis_b] + radius * ARM_REAL(sin((double)theta));
+  } else if (square_plane_axes(scenario, &axis_a, &axis_b)) {
+    const arm_real_t half_size = ARM_REAL(0.075);
+    arm_real_t center[3];
+    arm_vec3_copy(app->initial_tool_pos, center);
+    center[axis_a] -= half_size;
+    center[axis_b] -= half_size;
+    square_plane_target(center, axis_a, axis_b, half_size, t / ARM_REAL(0.85), target);
+  } else if (scenario == SCENARIO_TOOL_INSERT_LINE_HARSH) {
+    const arm_real_t distance = ARM_REAL(0.080);
+    arm_real_t progress = ARM_REAL_ZERO;
+    if (t < ARM_REAL(1.6)) {
+      progress = t / ARM_REAL(1.6);
+    } else if (t < ARM_REAL(2.6)) {
+      progress = ARM_REAL_ONE;
+    } else if (t < ARM_REAL(4.2)) {
+      progress = ARM_REAL_ONE - (t - ARM_REAL(2.6)) / ARM_REAL(1.6);
+    }
+    progress = arm_clamp(progress, ARM_REAL_ZERO, ARM_REAL_ONE);
+    target[0] = app->initial_tool_pos[0] - distance * progress;
+  }
+
+  return solve_tool_target(app, target);
+}
+
+static int update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     app->manual_goal_ref.dq_ref_rad_s[i] = ARM_REAL_ZERO;
+  }
+
+  if (scenario_uses_tool_path(scenario)) {
+    return update_tool_scenario_goal(app, scenario, time_s);
   }
 
   if (scenario == SCENARIO_STEP_J2_HARSH && time_s >= ARM_REAL(1.0)) {
@@ -401,6 +721,8 @@ static void update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scen
       app->manual_goal_ref.q_ref_rad[2] = ARM_REAL(-1.20);
     }
   }
+  app->tool_target_valid = false;
+  return ARM_OK;
 }
 
 static void compute_gravity_ff(benchmark_app_t *app, arm_real_t tau_ff_gravity[ARM_DOF_MAX]) {
@@ -436,7 +758,7 @@ static void compute_active_model_ff(benchmark_app_t *app, arm_real_t tau_ff_mode
   }
 }
 
-static int load_app(benchmark_app_t *app, const char *model_path) {
+static int load_app(benchmark_app_t *app, const char *model_path, benchmark_scenario_t scenario) {
   char load_error[1024] = {0};
   app->model = mj_loadXML(model_path, NULL, load_error, sizeof(load_error));
   if (!app->model) {
@@ -467,7 +789,7 @@ static int load_app(benchmark_app_t *app, const char *model_path) {
     app->model->opt.disableflags |= mjDSBL_CONTACT;
   }
 
-  mj_forward(app->model, app->data);
+  configure_initial_pose_for_scenario(app->model, app->data, &app->mj_arm, scenario);
   mujoco_arm_read_state(
       app->data, &app->mj_arm, ARM_REAL_ZERO, ARM_REAL(app->model->opt.timestep), &app->core.state);
 
@@ -479,6 +801,7 @@ static int load_app(benchmark_app_t *app, const char *model_path) {
   configure_gravity_ff(app);
   status = configure_inverse_dynamics_ff(app);
   if (status != ARM_OK) return status;
+  configure_kinematics(app);
 
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   impairment_config.enabled = app->harsh_enabled;
@@ -560,7 +883,7 @@ int main(int argc, char **argv) {
   benchmark_app_t app = {0};
   app.harsh_enabled = harsh_enabled;
   app.contacts_enabled = contacts_enabled;
-  int status = load_app(&app, model_path);
+  int status = load_app(&app, model_path, scenario);
   if (status != ARM_OK) {
     destroy_app(&app);
     return EXIT_FAILURE;
@@ -590,7 +913,13 @@ int main(int argc, char **argv) {
   };
   const arm_real_t duration_s = ARM_REAL(5.0);
   while (ARM_REAL(app.data->time) < duration_s && !benchmark_gui_should_stop(&gui)) {
-    update_scenario_goal(&app, scenario, ARM_REAL(app.data->time));
+    status = update_scenario_goal(&app, scenario, ARM_REAL(app.data->time));
+    if (status != ARM_OK) {
+      fprintf(stderr, "Scenario update failed: %d\n", status);
+      benchmark_gui_close(&gui);
+      destroy_app(&app);
+      return EXIT_FAILURE;
+    }
     status = joint_ref_shaper_step(&app.shaper, &app.core.state, &app.manual_goal_ref, &app.active_ref);
     if (status != ARM_OK) {
       fprintf(stderr, "Reference shaper failed: %d\n", status);
@@ -621,8 +950,18 @@ int main(int argc, char **argv) {
 
     arm_real_t tau_ff_gravity[ARM_DOF_MAX];
     arm_real_t tau_ff_model[ARM_DOF_MAX];
+    arm_real_t tool_pos[3];
+    arm_real_t tool_ref[3];
     compute_gravity_ff(&app, tau_ff_gravity);
     compute_active_model_ff(&app, tau_ff_model);
+    if (joint_kinematics_fk_position(&app.kinematics, &app.core.state, tool_pos) != ARM_OK) {
+      arm_vec3_zero(tool_pos);
+    }
+    if (app.tool_target_valid) {
+      arm_vec3_copy(app.tool_target_pos, tool_ref);
+    } else {
+      arm_vec3_copy(tool_pos, tool_ref);
+    }
     (void)control_log_write_step(
         &app.log,
         app.model,
@@ -632,6 +971,8 @@ int main(int argc, char **argv) {
         &app.measured_state,
         &app.core.state,
         &app.active_ref,
+        tool_pos,
+        tool_ref,
         tau_ff_gravity,
         tau_ff_model,
         &app.core.command);

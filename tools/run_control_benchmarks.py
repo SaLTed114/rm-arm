@@ -20,6 +20,13 @@ DEFAULT_SCENARIOS = (
     "straight_arm_lift_harsh",
     "near_limit_j2_harsh",
     "floor_blocked_harsh",
+    "tool_circle_xy_harsh",
+    "tool_circle_xz_harsh",
+    "tool_circle_yz_harsh",
+    "tool_square_xy_harsh",
+    "tool_square_xz_harsh",
+    "tool_square_yz_harsh",
+    "tool_insert_line_harsh",
 )
 DEFAULT_FF_MODES = ("gravity",)
 DEFAULT_HARSH_MODES = ("on",)
@@ -126,15 +133,17 @@ def format_optional(value: Any, precision: int = 3) -> str:
 
 def print_report(results: dict[str, dict[str, Any]]) -> None:
     print("\nBenchmark summary")
-    print("case                           q_max   dq_max  sat_max  tau_slew  worst_q  worst_sat")
+    print("case                           q_max   dq_max  tool_max sat_max  tau_slew  worst_q  worst_sat")
     for case_name, result in results.items():
         summary = result["summary"]
         q_worst = worst_joint(result, "q_err_max_abs")
         sat_worst = worst_joint(result, "saturation_ratio")
+        tool_max = summary.get("tool_pos_err_max_m")
         print(
             f"{case_name:30s} "
             f"{summary['q_err_max_abs']:6.3f} "
             f"{summary['dq_err_max_abs']:7.3f} "
+            f"{format_optional(tool_max, 3):>8s} "
             f"{format_optional(summary.get('saturation_ratio_max'), 3):>7s} "
             f"{summary['tau_slew_rms_mean']:9.1f} "
             f"J{q_worst['joint']:<7d} "
@@ -156,6 +165,10 @@ def print_report(results: dict[str, dict[str, Any]]) -> None:
             notes.append("torque saturation is becoming part of the response")
         if slew_worst["tau_slew_rms"] > 250.0:
             notes.append(f"J{slew_worst['joint']} torque slew is high")
+        tool_err = summary.get("tool_pos_err_max_m")
+        tool_path = summary.get("tool_ref_path_length_m")
+        if tool_path is not None and tool_path > 0.05 and tool_err is not None and tool_err > 0.05:
+            notes.append("tool path tracking error is large")
         margin = summary.get("torque_margin_min_nm")
         if margin is not None and margin < 1.0:
             notes.append("torque margin is nearly exhausted")

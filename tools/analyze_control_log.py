@@ -159,6 +159,16 @@ def slew(values: list[float], times: list[float]) -> list[float]:
     return out
 
 
+def path_length(xs: list[float], ys: list[float], zs: list[float]) -> float:
+    total = 0.0
+    for ax, ay, az, bx, by, bz in zip(xs, ys, zs, xs[1:], ys[1:], zs[1:]):
+        dx = bx - ax
+        dy = by - ay
+        dz = bz - az
+        total += math.sqrt(dx * dx + dy * dy + dz * dz)
+    return total
+
+
 def longest_true_duration(times: list[float], flags: list[bool]) -> float:
     if not times or not flags:
         return 0.0
@@ -225,6 +235,12 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     constraint_count = optional_scalar_series(fields, rows, "constraint_count")
     constraint_force_abs = optional_scalar_series(fields, rows, "constraint_force_abs")
     arm_contact_force_abs = optional_scalar_series(fields, rows, "arm_contact_force_abs")
+    tool_x = optional_scalar_series(fields, rows, "tool_x")
+    tool_y = optional_scalar_series(fields, rows, "tool_y")
+    tool_z = optional_scalar_series(fields, rows, "tool_z")
+    tool_ref_x = optional_scalar_series(fields, rows, "tool_ref_x")
+    tool_ref_y = optional_scalar_series(fields, rows, "tool_ref_y")
+    tool_ref_z = optional_scalar_series(fields, rows, "tool_ref_z")
 
     steady_start = max(0, int(len(rows) * (1.0 - max(0.0, min(1.0, args.steady_window)))))
     joints: list[dict[str, Any]] = []
@@ -354,6 +370,22 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     if lag_values:
         summary["actuator_lag_max_abs"] = max(value for _, value in lag_values)
         summary["actuator_lag_worst_joint"] = max(lag_values, key=lambda item: item[1])[0]
+    if (
+        tool_x is not None
+        and tool_y is not None
+        and tool_z is not None
+        and tool_ref_x is not None
+        and tool_ref_y is not None
+        and tool_ref_z is not None
+    ):
+        tool_err = [
+            math.sqrt((x - rx) ** 2 + (y - ry) ** 2 + (z - rz) ** 2)
+            for x, y, z, rx, ry, rz in zip(tool_x, tool_y, tool_z, tool_ref_x, tool_ref_y, tool_ref_z)
+        ]
+        summary["tool_pos_err_rms_m"] = rms(tool_err)
+        summary["tool_pos_err_max_m"] = max(tool_err) if tool_err else 0.0
+        summary["tool_pos_err_final_m"] = tool_err[-1] if tool_err else 0.0
+        summary["tool_ref_path_length_m"] = path_length(tool_ref_x, tool_ref_y, tool_ref_z)
     if contact_count is not None:
         contact_flags = [value > 0.0 for value in contact_count]
         summary["contact_ratio"] = sum(1 for active in contact_flags if active) / len(contact_flags)
@@ -412,6 +444,14 @@ def print_summary(result: dict[str, Any]) -> None:
         print(
             "actuator lag: max={:.3f} Nm worst_joint=J{}".format(
                 summary["actuator_lag_max_abs"], summary["actuator_lag_worst_joint"]
+            )
+        )
+    if "tool_pos_err_rms_m" in summary:
+        print(
+            "tool path: err_rms={:.4f} m err_max={:.4f} m ref_length={:.3f} m".format(
+                summary["tool_pos_err_rms_m"],
+                summary["tool_pos_err_max_m"],
+                summary["tool_ref_path_length_m"],
             )
         )
     if "contact_ratio" in summary:

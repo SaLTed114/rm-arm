@@ -273,8 +273,18 @@ static void debug_log_open(viewer_app_t *app) {
 static void debug_log_step(viewer_app_t *app) {
   arm_real_t tau_ff_gravity[ARM_DOF_MAX];
   arm_real_t tau_ff_model[ARM_DOF_MAX];
+  arm_real_t tool_pos[3];
+  arm_real_t tool_ref[3];
   compute_gravity_ff_log(app, tau_ff_gravity);
   compute_model_ff_log(app, tau_ff_model);
+  if (joint_kinematics_fk_position(&app->kinematics, &app->core.state, tool_pos) != ARM_OK) {
+    arm_vec3_zero(tool_pos);
+  }
+  if (app->tool_target_valid) {
+    arm_vec3_copy(app->tool_target_pos, tool_ref);
+  } else {
+    arm_vec3_copy(tool_pos, tool_ref);
+  }
 
   const control_log_flags_t flags = {
       app->gravity_enabled,
@@ -292,6 +302,8 @@ static void debug_log_step(viewer_app_t *app) {
       &app->measured_state,
       &app->core.state,
       &app->control_ref,
+      tool_pos,
+      tool_ref,
       tau_ff_gravity,
       tau_ff_model,
       &app->core.command);

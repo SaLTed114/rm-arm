@@ -50,6 +50,14 @@ static void write_zero_values(control_log_t *log) {
   }
 }
 
+static void write_vec3_or_zero(control_log_t *log, const arm_real_t values[3]) {
+  if (values) {
+    (void)fprintf(log->file, ",%.9f,%.9f,%.9f", (double)values[0], (double)values[1], (double)values[2]);
+  } else {
+    (void)fprintf(log->file, ",0.000000000,0.000000000,0.000000000");
+  }
+}
+
 static bool contact_is_base_floor_pair(const mjModel *model, const mjContact *contact) {
   if (!model || !contact) return false;
 
@@ -93,6 +101,7 @@ bool control_log_write_header(control_log_t *log) {
   write_columns(log, "q_ref");
   write_columns(log, "dq_ref");
   write_columns(log, "ddq_ref");
+  (void)fprintf(log->file, ",tool_x,tool_y,tool_z,tool_ref_x,tool_ref_y,tool_ref_z");
   write_columns(log, "tau_ff_gravity");
   write_columns(log, "tau_ff_model");
   write_columns(log, "tau_fb");
@@ -111,6 +120,8 @@ bool control_log_write_step(
     const arm_state_t *measured_state,
     const arm_state_t *filtered_state,
     const arm_reference_t *ref,
+    const arm_real_t tool_pos_world[3],
+    const arm_real_t tool_ref_world[3],
     const arm_real_t tau_ff_gravity[ARM_DOF_MAX],
     const arm_real_t tau_ff_model[ARM_DOF_MAX],
     const arm_command_t *command) {
@@ -164,6 +175,8 @@ bool control_log_write_step(
   write_values(log, ref->q_ref_rad);
   write_values(log, ref->dq_ref_rad_s);
   write_values(log, ref->ddq_ref_rad_s2);
+  write_vec3_or_zero(log, tool_pos_world);
+  write_vec3_or_zero(log, tool_ref_world);
 
   if (tau_ff_gravity) {
     write_values(log, tau_ff_gravity);
