@@ -76,6 +76,8 @@ mujoco:
       size: 0.025
       density: 900
       condim: 3
+      contype: 0
+      conaffinity: 0
       friction: [0.8, 0.02, 0.001]
       rgba: [0.65, 0.70, 0.76, 1]
     motor: { ctrllimited: true, gear: 1 }
@@ -84,12 +86,14 @@ mujoco:
     lights:
       - { name: key, pos: [0, -1.2, 1.8], dir: [0, 1, -1] }
     geoms:
-      - { name: floor, type: plane, pos: [0, 0, -0.02], size: [1.2, 1.2, 0.02], condim: 3, friction: [0.9, 0.02, 0.001], rgba: [0.18, 0.19, 0.20, 1] }
+      - { name: floor, type: plane, pos: [0, 0, -0.02], size: [1.2, 1.2, 0.02], condim: 3, contype: 1, conaffinity: 1, friction: [0.9, 0.02, 0.001], rgba: [0.18, 0.19, 0.20, 1] }
     bodies:
       - name: base
         pos: [0, 0, 0]
         geoms:
           - { name: base_plate, type: cylinder, size: [0.12, 0.035], mass: 1.6, rgba: [0.20, 0.22, 0.25, 1] }
+        collision_geoms:
+          - { name: base_collision, type: cylinder, size: [0.11, 0.030], contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
         bodies:
           - name: yaw_column
             pos: [0, 0, 0.04]
@@ -104,6 +108,8 @@ mujoco:
                 geoms:
                   - { name: shoulder_axis, type: cylinder, fromto: [0, -0.10, 0, 0, 0.10, 0], size: 0.035, mass: 0.35, rgba: [0.38, 0.42, 0.48, 1] }
                   - { name: upper_arm_geom, fromto: [0, 0, 0, 0.34, 0, 0], size: 0.045, mass: 3.2, rgba: [0.63, 0.68, 0.74, 1] }
+                collision_geoms:
+                  - { name: upper_arm_collision, fromto: [0.05, 0, 0, 0.32, 0, 0], size: 0.036, contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
                 bodies:
                   - name: forearm
                     pos: [0.34, 0, 0]
@@ -112,12 +118,16 @@ mujoco:
                       - { name: elbow_shell, type: sphere, size: 0.065, mass: 0.55, rgba: [0.36, 0.40, 0.46, 1] }
                       - { name: elbow_axis, type: cylinder, fromto: [0, -0.08, 0, 0, 0.08, 0], size: 0.028, mass: 0.25, rgba: [0.38, 0.42, 0.48, 1] }
                       - { name: forearm_geom, fromto: [0, 0, 0, 0.28, 0, 0], size: 0.038, mass: 2.4, rgba: [0.66, 0.71, 0.77, 1] }
+                    collision_geoms:
+                      - { name: forearm_collision, fromto: [0.04, 0, 0, 0.26, 0, 0], size: 0.030, contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
                     bodies:
                       - name: wrist_roll_1
                         pos: [0.28, 0, 0]
                         joint: joint_4
                         geoms:
                           - { name: wrist_roll_1_geom, fromto: [0, 0, 0, 0.075, 0, 0], size: 0.026, mass: 0.35, rgba: [0.45, 0.49, 0.54, 1] }
+                        collision_geoms:
+                          - { name: wrist_roll_1_collision, fromto: [0.01, 0, 0, 0.065, 0, 0], size: 0.022, contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
                         bodies:
                           - name: wrist_pitch
                             pos: [0.075, 0, 0]
@@ -126,6 +136,8 @@ mujoco:
                               - { name: wrist_pitch_shell, type: sphere, size: 0.040, mass: 0.25, rgba: [0.46, 0.50, 0.56, 1] }
                               - { name: wrist_pitch_axis, type: cylinder, fromto: [0, -0.055, 0, 0, 0.055, 0], size: 0.020, mass: 0.12, rgba: [0.38, 0.42, 0.48, 1] }
                               - { name: wrist_pitch_link, fromto: [0, 0, 0, 0.065, 0, 0], size: 0.022, mass: 0.22, rgba: [0.56, 0.60, 0.65, 1] }
+                            collision_geoms:
+                              - { name: wrist_pitch_collision, fromto: [0.01, 0, 0, 0.055, 0, 0], size: 0.018, contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
                             bodies:
                               - name: wrist_roll_2
                                 pos: [0.065, 0, 0]
@@ -138,5 +150,8 @@ mujoco:
                                   - { name: gripper_right_finger, type: box, pos: [0.138, -0.035, 0], size: [0.044, 0.010, 0.012], mass: 0.055, rgba: [0.93, 0.68, 0.32, 1] }
                                   - { name: gripper_left_tip, type: box, pos: [0.176, 0.026, 0], size: [0.010, 0.020, 0.011], mass: 0.025, rgba: [0.80, 0.46, 0.20, 1] }
                                   - { name: gripper_right_tip, type: box, pos: [0.176, -0.026, 0], size: [0.010, 0.020, 0.011], mass: 0.025, rgba: [0.80, 0.46, 0.20, 1] }
+                                collision_geoms:
+                                  - { name: wrist_roll_2_collision, fromto: [0.01, 0, 0, 0.075, 0, 0], size: 0.018, contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
+                                  - { name: gripper_collision, type: box, pos: [0.125, 0, 0], size: [0.060, 0.060, 0.035], contype: 1, conaffinity: 1, rgba: [0.1, 0.7, 0.95, 0.10] }
                                 sites:
                                   - { name: tool0, pos: [0.190, 0, 0], size: 0.003, rgba: [0.95, 0.95, 0.95, 0] }

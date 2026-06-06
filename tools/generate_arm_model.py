@@ -84,6 +84,11 @@ def append_body(lines: list[str], indent: int, body: dict[str, Any], joints: dic
         append_joint(lines, indent + 1, body["joint"], joints, default_range)
     for geom in body.get("geoms", []):
         xml_line(lines, indent + 1, "geom", geom)
+    for geom in body.get("collision_geoms", []):
+        attrs = dict(geom)
+        attrs.setdefault("mass", 0)
+        attrs.setdefault("rgba", [0.1, 0.7, 0.95, 0.12])
+        xml_line(lines, indent + 1, "geom", attrs)
     for site in body.get("sites", []):
         xml_line(lines, indent + 1, "site", site)
     for child in body.get("bodies", []):

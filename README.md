@@ -76,6 +76,11 @@ CMake will skip the unavailable simulation targets with a warning.
 
 The default model is `sim_mujoco/models/arm6_placeholder.xml`.
 
+The placeholder arm separates visual/inertial geometry from coarse collision
+geometry. Visual geoms do not collide, while a small set of massless collision
+geoms approximates the outer arm shape for floor and obstacle contact. This
+avoids artificial self-contact while still preventing obvious floor tunneling.
+
 In `armsim_viewer`, enable `Tool Drag` with the panel button or `T`, switch to
 `Dynamic`, choose `X`, `Y`, or `Z` in the panel or with the matching key, then
 left-drag in the scene to move the `tool0` target along that world axis. The
