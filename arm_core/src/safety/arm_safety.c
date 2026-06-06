@@ -36,6 +36,11 @@ static bool torque_pushes_with_overspeed(
   return false;
 }
 
+static arm_real_t model_torque_or_zero(const arm_command_t *command, uint8_t joint) {
+  if (!(command->flags & ARM_COMMAND_TAU_MODEL_VALID)) return ARM_REAL_ZERO;
+  return command->tau_model_ff_nm[joint];
+}
+
 void arm_safety_init(arm_safety_t *safety, uint8_t dof) {
   if (!safety) return;
 
@@ -71,9 +76,13 @@ int arm_safety_apply(const arm_safety_t *safety, const arm_state_t *state, arm_c
   for (uint8_t i = 0u; i < safety->dof; ++i) {
     const arm_safety_joint_params_t *joint = &safety->joints[i];
     arm_real_t tau = clamp_joint_torque(joint, command->tau_ff_nm[i]);
-    if (torque_pushes_deeper_into_limit(joint, state->q_rad[i], tau) ||
-        torque_pushes_with_overspeed(joint, state->dq_rad_s[i], tau)) {
+    if (torque_pushes_deeper_into_limit(joint, state->q_rad[i], tau)) {
       tau = ARM_REAL_ZERO;
+    } else if (torque_pushes_with_overspeed(joint, state->dq_rad_s[i], tau)) {
+      tau = clamp_joint_torque(joint, model_torque_or_zero(command, i));
+      if (torque_pushes_with_overspeed(joint, state->dq_rad_s[i], tau)) {
+        tau = ARM_REAL_ZERO;
+      }
     }
 
     command->tau_ff_nm[i] = tau;

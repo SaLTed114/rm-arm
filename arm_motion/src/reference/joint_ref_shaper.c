@@ -33,6 +33,7 @@ void joint_ref_shaper_init(
     shaper->q_goal_rad[i] = ARM_REAL_ZERO;
     shaper->q_ref_rad[i] = ARM_REAL_ZERO;
     shaper->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+    shaper->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
   }
   shaper->initialized = false;
 }
@@ -49,6 +50,7 @@ void joint_ref_shaper_reset_to_state(joint_ref_shaper_t *shaper, const arm_state
     shaper->q_goal_rad[i] = q_clamped;
     shaper->q_ref_rad[i] = q_clamped;
     shaper->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+    shaper->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
   }
   shaper->initialized = true;
 }
@@ -72,7 +74,7 @@ int joint_ref_shaper_step(
   }
 
   arm_reference_zero(shaped_ref, shaper->dof);
-  shaped_ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  shaped_ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID;
 
   const arm_real_t dt = state->dt_s > ARM_REAL_ZERO ? state->dt_s : ARM_REAL_ZERO;
   for (uint8_t i = 0u; i < shaper->dof; ++i) {
@@ -85,6 +87,7 @@ int joint_ref_shaper_step(
     const arm_real_t dq_limit = sanitize_positive(shaper->params.dq_limit_rad_s[i]);
     const arm_real_t ddq_limit = sanitize_positive(shaper->params.ddq_limit_rad_s2[i]);
     const arm_real_t err = shaper->q_goal_rad[i] - shaper->q_ref_rad[i];
+    const arm_real_t prev_dq = shaper->dq_ref_rad_s[i];
 
     arm_real_t desired_dq = ARM_REAL_ZERO;
     if (dt > ARM_REAL_ZERO) {
@@ -111,10 +114,20 @@ int joint_ref_shaper_step(
     }
     next_q = arm_clamp(next_q, q_min, q_max);
 
+    arm_real_t next_ddq = ARM_REAL_ZERO;
+    if (dt > ARM_REAL_ZERO) {
+      next_ddq = (next_dq - prev_dq) / dt;
+      if (ddq_limit > ARM_REAL_ZERO) {
+        next_ddq = arm_clamp(next_ddq, -ddq_limit, ddq_limit);
+      }
+    }
+
     shaper->q_ref_rad[i] = next_q;
     shaper->dq_ref_rad_s[i] = next_dq;
+    shaper->ddq_ref_rad_s2[i] = next_ddq;
     shaped_ref->q_ref_rad[i] = next_q;
     shaped_ref->dq_ref_rad_s[i] = next_dq;
+    shaped_ref->ddq_ref_rad_s2[i] = next_ddq;
   }
 
   return ARM_OK;

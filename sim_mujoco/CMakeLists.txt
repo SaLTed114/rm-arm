@@ -56,6 +56,7 @@ add_library(armsim_mujoco STATIC
   src/default_arm_config.c
   src/mujoco_arm.c
   src/mujoco_gravity_oracle.c
+  src/mujoco_inverse_dynamics_ff.c
   src/sim_impairment.c
   src/sim_loop.c
 )
@@ -88,6 +89,10 @@ add_executable(armsim_control_benchmark apps/armsim_control_benchmark.c)
 target_link_libraries(armsim_control_benchmark PRIVATE armsim_mujoco)
 copy_mujoco_runtime(armsim_control_benchmark)
 
+add_executable(armsim_sample_inverse_dynamics apps/armsim_sample_inverse_dynamics.c)
+target_link_libraries(armsim_sample_inverse_dynamics PRIVATE armsim_mujoco)
+copy_mujoco_runtime(armsim_sample_inverse_dynamics)
+
 if(ARMSIM_BUILD_TESTS)
   add_test(NAME armsim_verify_joints COMMAND armsim_verify_joints WORKING_DIRECTORY "${ARMSIM_ROOT}")
   add_test(NAME armsim_verify_gravity_comp COMMAND armsim_verify_gravity_comp WORKING_DIRECTORY "${ARMSIM_ROOT}")
@@ -95,6 +100,11 @@ if(ARMSIM_BUILD_TESTS)
   add_test(
     NAME armsim_control_benchmark_hold_zero
     COMMAND armsim_control_benchmark hold_zero_harsh logs/control_benchmark_hold_zero_harsh.csv
+    WORKING_DIRECTORY "${ARMSIM_ROOT}"
+  )
+  add_test(
+    NAME armsim_control_benchmark_hold_zero_inverse
+    COMMAND armsim_control_benchmark hold_zero_harsh logs/control_benchmark_hold_zero_harsh_inverse.csv --ff=inverse
     WORKING_DIRECTORY "${ARMSIM_ROOT}"
   )
 

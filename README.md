@@ -98,6 +98,10 @@ Run a benchmark:
 .\build\sim_mujoco\armsim_control_benchmark.exe hold_zero_harsh logs/control_benchmark_hold_zero_harsh.csv
 ```
 
+Benchmark feedforward modes can be selected with `--ff=none`, `--ff=gravity`,
+or `--ff=inverse`. `inverse` uses MuJoCo online inverse dynamics and is a
+simulation oracle only.
+
 Analyze a log:
 
 ```powershell
@@ -113,5 +117,38 @@ python tools/run_control_benchmarks.py
 The analyzer is not tied to MuJoCo. A future real-arm miniPC logger can reuse it
 by recording compatible CSV rows from serial samples; JSONL can be added later
 without changing the core metrics definitions.
+
+## Feedforward Models
+
+`joint_gravity_ff` is a portable analytic gravity compensator in `arm_core`.
+It is suitable for firmware once link masses and centers of mass are reliable.
+
+`mujoco_inverse_dynamics_ff` lives in `sim_mujoco` and calls MuJoCo `mj_inverse`
+online. It estimates the best-case full dynamics feedforward from
+current `q/dq` plus `ddq_ref`, and should not be copied into firmware. Using
+current state makes the oracle more stable for manual or teleop-style references
+where tracking error can be nonzero.
+
+`joint_id_fit_ff` is the portable fitted inverse-dynamics evaluator. Its
+coefficients are generated from CSV samples. First sample inverse dynamics with
+the C-side MuJoCo tool:
+
+```powershell
+.\build\sim_mujoco\armsim_sample_inverse_dynamics.exe logs/inverse_dynamics_samples.csv 2000
+```
+
+Then fit and generate coefficients with Python:
+
+```powershell
+python tools/fit_inverse_dynamics_ff.py --config configs/arm6_placeholder.yaml --fit --samples-csv logs/inverse_dynamics_samples.csv
+```
+
+Python does not need the MuJoCo package for fitting; MuJoCo is only used by the
+C sampler. Without samples, the script can still check or generate the committed
+zero-coefficient placeholder:
+
+```powershell
+python tools/fit_inverse_dynamics_ff.py --config configs/arm6_placeholder.yaml --check
+```
 
 Keil/STM32 sync tooling will be added after the real-vehicle adapter exists.

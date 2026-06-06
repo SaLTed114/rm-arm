@@ -177,11 +177,14 @@ int main(void) {
   goal_ref.q_ref_rad[0] = 2.0;
   assert(joint_ref_shaper_step(&shaper, &state, &goal_ref, &shaped_ref) == ARM_OK);
   assert(shaper.q_goal_rad[0] == 0.5);
+  assert(shaped_ref.flags & ARM_REFERENCE_DDQ_VALID);
   assert(shaped_ref.dq_ref_rad_s[0] <= 0.2 + 1.0e-9);
   assert(shaped_ref.dq_ref_rad_s[0] <= 1.0 + 1.0e-9);
+  assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) <= 2.0 + 1.0e-9);
   const arm_real_t first_dq = shaped_ref.dq_ref_rad_s[0];
   assert(joint_ref_shaper_step(&shaper, &state, &goal_ref, &shaped_ref) == ARM_OK);
   assert(shaped_ref.dq_ref_rad_s[0] - first_dq <= 0.2 + 1.0e-9);
+  assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) <= 2.0 + 1.0e-9);
 
   return 0;
 }

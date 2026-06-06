@@ -12,7 +12,8 @@ typedef enum {
 typedef enum {
   ARM_REFERENCE_Q_VALID      = 1u << 0,
   ARM_REFERENCE_DQ_VALID     = 1u << 1,
-  ARM_REFERENCE_TAU_FF_VALID = 1u << 2,
+  ARM_REFERENCE_DDQ_VALID    = 1u << 2,
+  ARM_REFERENCE_TAU_FF_VALID = 1u << 3,
 } arm_reference_flags_t;
 
 typedef enum {
@@ -21,6 +22,8 @@ typedef enum {
   ARM_COMMAND_KP_VALID       = 1u << 2,
   ARM_COMMAND_KD_VALID       = 1u << 3,
   ARM_COMMAND_TAU_FF_VALID   = 1u << 4,
+  ARM_COMMAND_TAU_FB_VALID   = 1u << 5,
+  ARM_COMMAND_TAU_MODEL_VALID = 1u << 6,
 } arm_command_flags_t;
 
 typedef struct {
@@ -57,6 +60,7 @@ typedef struct {
   uint8_t dof;
   arm_real_t q_ref_rad[ARM_DOF_MAX];
   arm_real_t dq_ref_rad_s[ARM_DOF_MAX];
+  arm_real_t ddq_ref_rad_s2[ARM_DOF_MAX];
   arm_real_t tau_ff_nm[ARM_DOF_MAX];
   uint32_t flags;
 } arm_reference_t;
@@ -67,6 +71,8 @@ typedef struct {
   arm_real_t dq_d_rad_s[ARM_DOF_MAX];
   arm_real_t kp[ARM_DOF_MAX];
   arm_real_t kd[ARM_DOF_MAX];
+  arm_real_t tau_fb_nm[ARM_DOF_MAX];
+  arm_real_t tau_model_ff_nm[ARM_DOF_MAX];
   /* Feed-forward or direct torque target. tau_ff > 0 pushes the joint in the
      right-hand-rule positive direction. */
   arm_real_t tau_ff_nm[ARM_DOF_MAX];

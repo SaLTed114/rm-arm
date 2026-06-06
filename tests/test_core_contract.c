@@ -65,11 +65,13 @@ static void test_zero_helpers_contract(void) {
 
   arm_reference_t ref;
   ref.dof = 99u;
-  ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_TAU_FF_VALID;
+  ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID |
+              ARM_REFERENCE_TAU_FF_VALID;
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
     ref.q_ref_rad[i] = ARM_REAL(1.0);
     ref.dq_ref_rad_s[i] = ARM_REAL(2.0);
-    ref.tau_ff_nm[i] = ARM_REAL(3.0);
+    ref.ddq_ref_rad_s2[i] = ARM_REAL(3.0);
+    ref.tau_ff_nm[i] = ARM_REAL(4.0);
   }
   arm_reference_zero(&ref, (uint8_t)(ARM_DOF_MAX + 4u));
   assert(ref.dof == ARM_DOF_MAX);
@@ -77,19 +79,23 @@ static void test_zero_helpers_contract(void) {
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
     assert(near(ref.q_ref_rad[i], ARM_REAL_ZERO));
     assert(near(ref.dq_ref_rad_s[i], ARM_REAL_ZERO));
+    assert(near(ref.ddq_ref_rad_s2[i], ARM_REAL_ZERO));
     assert(near(ref.tau_ff_nm[i], ARM_REAL_ZERO));
   }
 
   arm_command_t command;
   command.dof = 99u;
   command.flags = ARM_COMMAND_Q_D_VALID | ARM_COMMAND_DQ_D_VALID | ARM_COMMAND_KP_VALID |
-                  ARM_COMMAND_KD_VALID | ARM_COMMAND_TAU_FF_VALID;
+                  ARM_COMMAND_KD_VALID | ARM_COMMAND_TAU_FF_VALID |
+                  ARM_COMMAND_TAU_FB_VALID | ARM_COMMAND_TAU_MODEL_VALID;
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
     command.q_d_rad[i] = ARM_REAL(1.0);
     command.dq_d_rad_s[i] = ARM_REAL(2.0);
     command.kp[i] = ARM_REAL(3.0);
     command.kd[i] = ARM_REAL(4.0);
-    command.tau_ff_nm[i] = ARM_REAL(5.0);
+    command.tau_fb_nm[i] = ARM_REAL(5.0);
+    command.tau_model_ff_nm[i] = ARM_REAL(6.0);
+    command.tau_ff_nm[i] = ARM_REAL(7.0);
   }
   arm_command_zero(&command, (uint8_t)(ARM_DOF_MAX + 4u));
   assert(command.dof == ARM_DOF_MAX);
@@ -99,6 +105,8 @@ static void test_zero_helpers_contract(void) {
     assert(near(command.dq_d_rad_s[i], ARM_REAL_ZERO));
     assert(near(command.kp[i], ARM_REAL_ZERO));
     assert(near(command.kd[i], ARM_REAL_ZERO));
+    assert(near(command.tau_fb_nm[i], ARM_REAL_ZERO));
+    assert(near(command.tau_model_ff_nm[i], ARM_REAL_ZERO));
     assert(near(command.tau_ff_nm[i], ARM_REAL_ZERO));
   }
 }
@@ -111,11 +119,14 @@ static void test_command_limit_contract(void) {
   arm_command_t command;
   arm_command_zero(&command, config.dof);
   command.flags = ARM_COMMAND_Q_D_VALID | ARM_COMMAND_DQ_D_VALID | ARM_COMMAND_KP_VALID |
-                  ARM_COMMAND_KD_VALID | ARM_COMMAND_TAU_FF_VALID;
+                  ARM_COMMAND_KD_VALID | ARM_COMMAND_TAU_FF_VALID |
+                  ARM_COMMAND_TAU_FB_VALID | ARM_COMMAND_TAU_MODEL_VALID;
   command.q_d_rad[0] = ARM_REAL(0.11);
   command.dq_d_rad_s[0] = ARM_REAL(0.22);
   command.kp[0] = ARM_REAL(3.3);
   command.kd[0] = ARM_REAL(4.4);
+  command.tau_fb_nm[0] = ARM_REAL(5.5);
+  command.tau_model_ff_nm[0] = ARM_REAL(6.6);
   command.tau_ff_nm[0] = ARM_REAL(9.0);
   command.tau_ff_nm[1] = ARM_REAL(-9.0);
 
@@ -126,8 +137,11 @@ static void test_command_limit_contract(void) {
   assert(near(command.dq_d_rad_s[0], ARM_REAL(0.22)));
   assert(near(command.kp[0], ARM_REAL(3.3)));
   assert(near(command.kd[0], ARM_REAL(4.4)));
+  assert(near(command.tau_fb_nm[0], ARM_REAL(5.5)));
+  assert(near(command.tau_model_ff_nm[0], ARM_REAL(6.6)));
   assert(command.flags == (ARM_COMMAND_Q_D_VALID | ARM_COMMAND_DQ_D_VALID | ARM_COMMAND_KP_VALID |
-                           ARM_COMMAND_KD_VALID | ARM_COMMAND_TAU_FF_VALID));
+                           ARM_COMMAND_KD_VALID | ARM_COMMAND_TAU_FF_VALID |
+                           ARM_COMMAND_TAU_FB_VALID | ARM_COMMAND_TAU_MODEL_VALID));
 }
 
 static void test_math_contract(void) {

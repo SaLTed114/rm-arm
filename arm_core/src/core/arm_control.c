@@ -22,6 +22,23 @@ static int run_ff(arm_t *arm, const arm_reference_t *ref, arm_feedforward_t *ff)
   return ff->vt->step(ff->ctx, arm, ref);
 }
 
+static void capture_feedback_torque(const arm_t *arm, arm_real_t tau_fb_nm[ARM_DOF_MAX]) {
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    tau_fb_nm[i] = ARM_REAL_ZERO;
+  }
+  for (uint8_t i = 0u; i < arm->config.dof; ++i) {
+    tau_fb_nm[i] = arm->command.tau_ff_nm[i];
+  }
+}
+
+static void publish_torque_split(arm_t *arm, const arm_real_t tau_fb_nm[ARM_DOF_MAX]) {
+  for (uint8_t i = 0u; i < arm->config.dof; ++i) {
+    arm->command.tau_fb_nm[i] = tau_fb_nm[i];
+    arm->command.tau_model_ff_nm[i] = arm->command.tau_ff_nm[i] - tau_fb_nm[i];
+  }
+  arm->command.flags |= ARM_COMMAND_TAU_FB_VALID | ARM_COMMAND_TAU_MODEL_VALID;
+}
+
 int arm_control_step_with_feedforward(
     arm_t *arm,
     const arm_reference_t *ref,
@@ -38,11 +55,15 @@ int arm_control_step_with_feedforward(
     return status;
   }
 
+  arm_real_t tau_fb_nm[ARM_DOF_MAX];
+  capture_feedback_torque(arm, tau_fb_nm);
+
   status = run_ff(arm, ref, ff);
   if (status != ARM_OK) {
     arm_clear_command(arm);
     return status;
   }
+  publish_torque_split(arm, tau_fb_nm);
 
   arm->command.dof = arm->config.dof;
   arm_limit_command(arm);

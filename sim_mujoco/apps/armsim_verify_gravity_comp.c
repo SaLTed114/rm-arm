@@ -12,6 +12,7 @@
 #include "armsim/default_arm_config.h"
 #include "armsim/mujoco_arm.h"
 #include "armsim/mujoco_gravity_oracle.h"
+#include "armsim/mujoco_inverse_dynamics_ff.h"
 
 static const char *default_model_path(void) {
   return "sim_mujoco/models/arm6_placeholder.xml";
@@ -92,6 +93,24 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  mujoco_inverse_dynamics_ff_t inverse_ff;
+  if (mujoco_inverse_dynamics_ff_init(&inverse_ff, model, &arm) != ARM_OK) {
+    fprintf(stderr, "Failed to initialize inverse dynamics oracle.\n");
+    mj_deleteData(data);
+    mj_deleteModel(model);
+    return EXIT_FAILURE;
+  }
+  arm_real_t tau_inverse[ARM_DOF_MAX];
+  const int inverse_status =
+      mujoco_inverse_dynamics_compute_tau(model, inverse_ff.scratch, &arm, &state, &ref, tau_inverse);
+  mujoco_inverse_dynamics_ff_free(&inverse_ff);
+  if (inverse_status != ARM_OK) {
+    fprintf(stderr, "Inverse dynamics oracle failed: %d\n", inverse_status);
+    mj_deleteData(data);
+    mj_deleteModel(model);
+    return EXIT_FAILURE;
+  }
+
   static const joint_gravity_ff_params_t gravity_params = ARMSIM_ARM6_GRAVITY_FF_PARAMS;
   joint_gravity_ff_t gravity;
   joint_gravity_ff_init(&gravity, &gravity_params);
@@ -118,12 +137,24 @@ int main(int argc, char **argv) {
   }
   const double shoulder_err = fabs((double)(core.command.tau_ff_nm[1] - oracle_ref.tau_ff_nm[1]));
   const double elbow_err = fabs((double)(core.command.tau_ff_nm[2] - oracle_ref.tau_ff_nm[2]));
+  const double inverse_shoulder_err = fabs((double)(tau_inverse[1] - oracle_ref.tau_ff_nm[1]));
+  const double inverse_elbow_err = fabs((double)(tau_inverse[2] - oracle_ref.tau_ff_nm[2]));
   if (shoulder_err > 3.0 || elbow_err > 1.0) {
     fprintf(
         stderr,
         "Core gravity feedforward differs from MuJoCo oracle: core=(%.9f, %.9f) oracle=(%.9f, %.9f)\n",
         (double)core.command.tau_ff_nm[1],
         (double)core.command.tau_ff_nm[2],
+        (double)oracle_ref.tau_ff_nm[1],
+        (double)oracle_ref.tau_ff_nm[2]);
+    return EXIT_FAILURE;
+  }
+  if (inverse_shoulder_err > 1.0e-6 || inverse_elbow_err > 1.0e-6) {
+    fprintf(
+        stderr,
+        "Inverse dynamics static torque differs from MuJoCo gravity oracle: inverse=(%.9f, %.9f) oracle=(%.9f, %.9f)\n",
+        (double)tau_inverse[1],
+        (double)tau_inverse[2],
         (double)oracle_ref.tau_ff_nm[1],
         (double)oracle_ref.tau_ff_nm[2]);
     return EXIT_FAILURE;

@@ -28,7 +28,8 @@ Rules for this directory:
 - Feedforward modules are plain C contexts adapted by `arm_feedforward_t`.
   They run in parallel with the feedback controller and add model-based torque
   into the final command before command limiting. `joint_gravity_ff` is the
-  current config-driven gravity compensation module.
+  current config-driven gravity compensation module, and `joint_id_fit_ff`
+  evaluates generated fitted inverse-dynamics coefficients.
 - `arm_safety` is a final command-side guard for invalid state, torque limits,
   soft position limits, and overspeed protection.
 - Control performance metrics and log analysis live in PC-side `tools/`.
@@ -50,6 +51,8 @@ Joint sign convention:
 generated outside `arm_core`, for example by `arm_motion` manual/teleop shaping,
 IK, or future trajectory sources. `arm_safety` remains a final command-side
 guard; it does not replace reference source logic.
+`ddq_ref_rad_s2` is optional and is intended for model feedforward, not for the
+standard PD feedback law.
 
 `arm_command_t` is the final actuator command abstraction; a pure torque
 controller and any enabled feedforward modules write `tau_ff_nm` with zero

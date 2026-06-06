@@ -16,6 +16,7 @@
 #include "armsim/control_log.h"
 #include "armsim/default_arm_config.h"
 #include "armsim/mujoco_arm.h"
+#include "armsim/mujoco_inverse_dynamics_ff.h"
 #include "armsim/sim_impairment.h"
 #include "armsim/sim_loop.h"
 
@@ -25,6 +26,12 @@ typedef enum {
   SCENARIO_COUPLED_J2J3_HARSH = 2,
   SCENARIO_STEP_J5_HARSH = 3,
 } benchmark_scenario_t;
+
+typedef enum {
+  BENCHMARK_FF_NONE = 0,
+  BENCHMARK_FF_GRAVITY = 1,
+  BENCHMARK_FF_INVERSE_DYNAMICS = 2,
+} benchmark_ff_mode_t;
 
 typedef struct {
   mjModel *model;
@@ -41,6 +48,9 @@ typedef struct {
   arm_controller_t ctrl;
   joint_gravity_ff_t gravity_ff;
   arm_feedforward_t ff;
+  mujoco_inverse_dynamics_ff_t inverse_dyn_ff;
+  arm_feedforward_t inverse_dyn_feedforward;
+  benchmark_ff_mode_t ff_mode;
   armsim_impairment_t impairment;
   control_log_t log;
 } benchmark_app_t;
@@ -80,6 +90,23 @@ static int parse_scenario(const char *name, benchmark_scenario_t *scenario) {
   }
   if (strcmp(name, "step_j5_harsh") == 0) {
     *scenario = SCENARIO_STEP_J5_HARSH;
+    return ARM_OK;
+  }
+  return ARM_ERR_CONFIG;
+}
+
+static int parse_ff_mode(const char *name, benchmark_ff_mode_t *mode) {
+  if (!name || !mode) return ARM_ERR_NULL;
+  if (strcmp(name, "none") == 0) {
+    *mode = BENCHMARK_FF_NONE;
+    return ARM_OK;
+  }
+  if (strcmp(name, "gravity") == 0) {
+    *mode = BENCHMARK_FF_GRAVITY;
+    return ARM_OK;
+  }
+  if (strcmp(name, "inverse") == 0 || strcmp(name, "inverse_dyn") == 0) {
+    *mode = BENCHMARK_FF_INVERSE_DYNAMICS;
     return ARM_OK;
   }
   return ARM_ERR_CONFIG;
@@ -157,6 +184,13 @@ static void configure_gravity_ff(benchmark_app_t *app) {
   app->ff = joint_gravity_ff_as_feedforward(&app->gravity_ff);
 }
 
+static int configure_inverse_dynamics_ff(benchmark_app_t *app) {
+  const int status = mujoco_inverse_dynamics_ff_init(&app->inverse_dyn_ff, app->model, &app->mj_arm);
+  if (status != ARM_OK) return status;
+  app->inverse_dyn_feedforward = mujoco_inverse_dynamics_ff_as_feedforward(&app->inverse_dyn_ff);
+  return ARM_OK;
+}
+
 static void set_initial_reference(benchmark_app_t *app, const arm_state_t *state) {
   arm_reference_zero(&app->manual_goal_ref, app->core.config.dof);
   arm_reference_zero(&app->active_ref, app->core.config.dof);
@@ -196,6 +230,27 @@ static void compute_gravity_ff(benchmark_app_t *app, arm_real_t tau_ff_gravity[A
   }
 }
 
+static arm_feedforward_t *active_feedforward(benchmark_app_t *app) {
+  if (app->ff_mode == BENCHMARK_FF_GRAVITY) return &app->ff;
+  if (app->ff_mode == BENCHMARK_FF_INVERSE_DYNAMICS) return &app->inverse_dyn_feedforward;
+  return NULL;
+}
+
+static void compute_active_model_ff(benchmark_app_t *app, arm_real_t tau_ff_model[ARM_DOF_MAX]) {
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    tau_ff_model[i] = ARM_REAL_ZERO;
+  }
+  arm_feedforward_t *ff = active_feedforward(app);
+  if (!ff) return;
+
+  arm_t ff_arm = app->core;
+  arm_feedforward_t ff_copy = *ff;
+  if (arm_control_step_with_feedforward(&ff_arm, &app->active_ref, NULL, &ff_copy) != ARM_OK) return;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    tau_ff_model[i] = ff_arm.command.tau_ff_nm[i];
+  }
+}
+
 static int load_app(benchmark_app_t *app, const char *model_path) {
   char load_error[1024] = {0};
   app->model = mj_loadXML(model_path, NULL, load_error, sizeof(load_error));
@@ -230,6 +285,8 @@ static int load_app(benchmark_app_t *app, const char *model_path) {
   configure_ref_shaper_and_safety(app);
   configure_state_filter(app, &app->core.state);
   configure_gravity_ff(app);
+  status = configure_inverse_dynamics_ff(app);
+  if (status != ARM_OK) return status;
 
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   armsim_impairment_init(&app->impairment, &impairment_config, app->core.config.dof);
@@ -239,6 +296,7 @@ static int load_app(benchmark_app_t *app, const char *model_path) {
 
 static void destroy_app(benchmark_app_t *app) {
   control_log_close(&app->log);
+  mujoco_inverse_dynamics_ff_free(&app->inverse_dyn_ff);
   if (app->data) {
     mj_deleteData(app->data);
     app->data = NULL;
@@ -251,9 +309,28 @@ static void destroy_app(benchmark_app_t *app) {
 
 int main(int argc, char **argv) {
   benchmark_scenario_t scenario = SCENARIO_HOLD_ZERO_HARSH;
+  benchmark_ff_mode_t ff_mode = BENCHMARK_FF_GRAVITY;
   if (argc > 1 && parse_scenario(argv[1], &scenario) != ARM_OK) {
     fprintf(stderr, "Unknown scenario '%s'.\n", argv[1]);
     return EXIT_FAILURE;
+  }
+
+  const char *log_path_arg = NULL;
+  const char *model_path_arg = NULL;
+  for (int i = 2; i < argc; ++i) {
+    if (strncmp(argv[i], "--ff=", 5) == 0) {
+      if (parse_ff_mode(argv[i] + 5, &ff_mode) != ARM_OK) {
+        fprintf(stderr, "Unknown feedforward mode '%s'.\n", argv[i] + 5);
+        return EXIT_FAILURE;
+      }
+    } else if (!log_path_arg) {
+      log_path_arg = argv[i];
+    } else if (!model_path_arg) {
+      model_path_arg = argv[i];
+    } else {
+      fprintf(stderr, "Unexpected argument '%s'.\n", argv[i]);
+      return EXIT_FAILURE;
+    }
   }
 
   char default_log_path[128];
@@ -262,8 +339,8 @@ int main(int argc, char **argv) {
       sizeof(default_log_path),
       "logs/control_benchmark_%s.csv",
       scenario_name(scenario));
-  const char *log_path = argc > 2 ? argv[2] : default_log_path;
-  const char *model_path = argc > 3 ? argv[3] : default_model_path();
+  const char *log_path = log_path_arg ? log_path_arg : default_log_path;
+  const char *model_path = model_path_arg ? model_path_arg : default_model_path();
 
   benchmark_app_t app = {0};
   int status = load_app(&app, model_path);
@@ -271,6 +348,7 @@ int main(int argc, char **argv) {
     destroy_app(&app);
     return EXIT_FAILURE;
   }
+  app.ff_mode = ff_mode;
 
   if (!control_log_open(&app.log, log_path, app.core.config.dof)) {
     fprintf(stderr, "Failed to open benchmark log '%s'.\n", log_path);
@@ -278,7 +356,13 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  const control_log_flags_t flags = {true, true, true, true};
+  const control_log_flags_t flags = {
+      true,
+      app.ff_mode == BENCHMARK_FF_GRAVITY,
+      app.ff_mode == BENCHMARK_FF_INVERSE_DYNAMICS,
+      true,
+      true,
+  };
   const arm_real_t duration_s = ARM_REAL(5.0);
   while (ARM_REAL(app.data->time) < duration_s) {
     update_scenario_goal(&app, scenario, ARM_REAL(app.data->time));
@@ -297,7 +381,7 @@ int main(int argc, char **argv) {
         &app.active_ref,
         &app.safety,
         &app.ctrl,
-        &app.ff,
+        active_feedforward(&app),
         &app.impairment,
         &app.state_filter,
         &app.measured_state);
@@ -308,7 +392,9 @@ int main(int argc, char **argv) {
     }
 
     arm_real_t tau_ff_gravity[ARM_DOF_MAX];
+    arm_real_t tau_ff_model[ARM_DOF_MAX];
     compute_gravity_ff(&app, tau_ff_gravity);
+    compute_active_model_ff(&app, tau_ff_model);
     (void)control_log_write_step(
         &app.log,
         app.data,
@@ -318,6 +404,7 @@ int main(int argc, char **argv) {
         &app.core.state,
         &app.active_ref,
         tau_ff_gravity,
+        tau_ff_model,
         &app.core.command);
   }
 

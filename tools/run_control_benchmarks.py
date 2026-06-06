@@ -12,6 +12,7 @@ from typing import Any
 
 
 DEFAULT_SCENARIOS = ("hold_zero_harsh", "step_j2_harsh", "coupled_j2j3_harsh", "step_j5_harsh")
+DEFAULT_FF_MODES = ("gravity",)
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=Path("configs/arm6_placeholder.yaml"), help="Arm config")
     parser.add_argument("--out-dir", type=Path, default=Path("logs"), help="Output log directory")
     parser.add_argument("--scenario", action="append", choices=DEFAULT_SCENARIOS, help="Scenario to run")
+    parser.add_argument("--ff", action="append", choices=("none", "gravity", "inverse"), help="Feedforward mode to run")
     parser.add_argument("--skip-run", action="store_true", help="Analyze existing CSV logs without rerunning sim")
     parser.add_argument("--verbose", action="store_true", help="Print full analyzer output")
     return parser.parse_args()
@@ -42,12 +44,12 @@ def run_command(command: list[str], cwd: Path, capture: bool = False) -> str:
     return ""
 
 
-def run_scenario(root: Path, exe: Path, scenario: str, csv_path: Path, skip_run: bool) -> None:
+def run_scenario(root: Path, exe: Path, scenario: str, ff_mode: str, csv_path: Path, skip_run: bool) -> None:
     if skip_run:
         if not csv_path.exists():
             raise RuntimeError(f"{csv_path} does not exist; remove --skip-run or generate it first")
         return
-    run_command([str(exe), scenario, str(csv_path)], root)
+    run_command([str(exe), scenario, str(csv_path), f"--ff={ff_mode}"], root)
 
 
 def analyze_scenario(
@@ -89,13 +91,13 @@ def format_optional(value: Any, precision: int = 3) -> str:
 
 def print_report(results: dict[str, dict[str, Any]]) -> None:
     print("\nBenchmark summary")
-    print("scenario                  q_max   dq_max  sat_max  tau_slew  worst_q  worst_sat")
-    for scenario, result in results.items():
+    print("case                           q_max   dq_max  sat_max  tau_slew  worst_q  worst_sat")
+    for case_name, result in results.items():
         summary = result["summary"]
         q_worst = worst_joint(result, "q_err_max_abs")
         sat_worst = worst_joint(result, "saturation_ratio")
         print(
-            f"{scenario:24s} "
+            f"{case_name:30s} "
             f"{summary['q_err_max_abs']:6.3f} "
             f"{summary['dq_err_max_abs']:7.3f} "
             f"{format_optional(summary.get('saturation_ratio_max'), 3):>7s} "
@@ -105,7 +107,7 @@ def print_report(results: dict[str, dict[str, Any]]) -> None:
         )
 
     print("\nQuick notes")
-    for scenario, result in results.items():
+    for case_name, result in results.items():
         summary = result["summary"]
         q_worst = worst_joint(result, "q_err_max_abs")
         slew_worst = worst_joint(result, "tau_slew_rms")
@@ -125,7 +127,7 @@ def print_report(results: dict[str, dict[str, Any]]) -> None:
             notes.append("passive-joint cross coupling is noticeable")
         if not notes:
             notes.append("no obvious red flag from coarse thresholds")
-        print(f"- {scenario}: " + "; ".join(notes))
+        print(f"- {case_name}: " + "; ".join(notes))
 
 
 def main() -> int:
@@ -135,6 +137,7 @@ def main() -> int:
     config_path = args.config if args.config.is_absolute() else root / args.config
     out_dir = args.out_dir if args.out_dir.is_absolute() else root / args.out_dir
     scenarios = tuple(args.scenario) if args.scenario else DEFAULT_SCENARIOS
+    ff_modes = tuple(args.ff) if args.ff else DEFAULT_FF_MODES
     exe = benchmark_exe(build_dir)
     if not args.skip_run and not exe.exists():
         print(f"Benchmark executable not found: {exe}", file=sys.stderr)
@@ -144,10 +147,12 @@ def main() -> int:
     results: dict[str, dict[str, Any]] = {}
     try:
         for scenario in scenarios:
-            csv_path = out_dir / f"control_benchmark_{scenario}.csv"
-            json_path = out_dir / f"control_benchmark_{scenario}_metrics.json"
-            run_scenario(root, exe, scenario, csv_path, args.skip_run)
-            results[scenario] = analyze_scenario(root, scenario, csv_path, config_path, json_path, args.verbose)
+            for ff_mode in ff_modes:
+                case_name = f"{scenario}_{ff_mode}"
+                csv_path = out_dir / f"control_benchmark_{case_name}.csv"
+                json_path = out_dir / f"control_benchmark_{case_name}_metrics.json"
+                run_scenario(root, exe, scenario, ff_mode, csv_path, args.skip_run)
+                results[case_name] = analyze_scenario(root, scenario, csv_path, config_path, json_path, args.verbose)
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}", file=sys.stderr)
         return exc.returncode

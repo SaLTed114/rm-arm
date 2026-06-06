@@ -73,6 +73,8 @@ void arm_command_zero(arm_command_t *command, uint8_t dof) {
     command->dq_d_rad_s[i] = ARM_REAL_ZERO;
     command->kp[i] = ARM_REAL_ZERO;
     command->kd[i] = ARM_REAL_ZERO;
+    command->tau_fb_nm[i] = ARM_REAL_ZERO;
+    command->tau_model_ff_nm[i] = ARM_REAL_ZERO;
     command->tau_ff_nm[i] = ARM_REAL_ZERO;
   }
 }
@@ -86,6 +88,7 @@ void arm_reference_zero(arm_reference_t *ref, uint8_t dof) {
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
     ref->q_ref_rad[i] = ARM_REAL_ZERO;
     ref->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+    ref->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
     ref->tau_ff_nm[i] = ARM_REAL_ZERO;
   }
 }

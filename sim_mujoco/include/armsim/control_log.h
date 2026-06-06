@@ -15,6 +15,7 @@ typedef struct {
 typedef struct {
   bool gravity_on;
   bool gravity_ff_on;
+  bool inverse_dyn_ff_on;
   bool contacts_on;
   bool harsh_on;
 } control_log_flags_t;
@@ -31,6 +32,7 @@ bool control_log_write_step(
     const arm_state_t *filtered_state,
     const arm_reference_t *ref,
     const arm_real_t tau_ff_gravity[ARM_DOF_MAX],
+    const arm_real_t tau_ff_model[ARM_DOF_MAX],
     const arm_command_t *command);
 
 #endif

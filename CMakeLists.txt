@@ -48,6 +48,11 @@ if(ARMSIM_BUILD_TESTS)
         COMMAND ${Python3_EXECUTABLE} tools/generate_arm_model.py --config configs/arm6_placeholder.yaml --check
         WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
       )
+      add_test(
+        NAME generated_arm6_id_fit_params
+        COMMAND ${Python3_EXECUTABLE} tools/fit_inverse_dynamics_ff.py --config configs/arm6_placeholder.yaml --check
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+      )
     else()
       message(STATUS "PyYAML not found; generated_arm6_config test is skipped.")
     endif()

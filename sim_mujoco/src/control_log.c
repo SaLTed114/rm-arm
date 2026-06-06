@@ -70,14 +70,16 @@ void control_log_close(control_log_t *log) {
 bool control_log_write_header(control_log_t *log) {
   if (!log || !log->file) return false;
 
-  (void)fprintf(log->file, "time_s,gravity_on,gravity_ff_on,contacts_on,harsh_on");
+  (void)fprintf(log->file, "time_s,gravity_on,gravity_ff_on,inverse_dyn_ff_on,contacts_on,harsh_on");
   write_columns(log, "q_meas");
   write_columns(log, "dq_meas");
   write_columns(log, "q_filt");
   write_columns(log, "dq_filt");
   write_columns(log, "q_ref");
   write_columns(log, "dq_ref");
+  write_columns(log, "ddq_ref");
   write_columns(log, "tau_ff_gravity");
+  write_columns(log, "tau_ff_model");
   write_columns(log, "tau_fb");
   write_columns(log, "tau_cmd");
   write_columns(log, "mj_ctrl");
@@ -94,6 +96,7 @@ bool control_log_write_step(
     const arm_state_t *filtered_state,
     const arm_reference_t *ref,
     const arm_real_t tau_ff_gravity[ARM_DOF_MAX],
+    const arm_real_t tau_ff_model[ARM_DOF_MAX],
     const arm_command_t *command) {
   if (!log || !log->file || !data || !arm || !filtered_state || !ref || !command) return false;
 
@@ -101,10 +104,11 @@ bool control_log_write_step(
   const control_log_flags_t *f = flags ? flags : &zero_flags;
   (void)fprintf(
       log->file,
-      "%.9f,%u,%u,%u,%u",
+      "%.9f,%u,%u,%u,%u,%u",
       (double)data->time,
       f->gravity_on ? 1u : 0u,
       f->gravity_ff_on ? 1u : 0u,
+      f->inverse_dyn_ff_on ? 1u : 0u,
       f->contacts_on ? 1u : 0u,
       f->harsh_on ? 1u : 0u);
 
@@ -119,16 +123,22 @@ bool control_log_write_step(
   write_values(log, filtered_state->dq_rad_s);
   write_values(log, ref->q_ref_rad);
   write_values(log, ref->dq_ref_rad_s);
+  write_values(log, ref->ddq_ref_rad_s2);
 
   if (tau_ff_gravity) {
     write_values(log, tau_ff_gravity);
   } else {
     write_zero_values(log);
   }
+  if (tau_ff_model) {
+    write_values(log, tau_ff_model);
+  } else {
+    write_zero_values(log);
+  }
 
   for (uint8_t i = 0u; i < log->dof; ++i) {
-    const arm_real_t gravity = tau_ff_gravity ? tau_ff_gravity[i] : ARM_REAL_ZERO;
-    (void)fprintf(log->file, ",%.9f", (double)(command->tau_ff_nm[i] - gravity));
+    const arm_real_t model_ff = tau_ff_model ? tau_ff_model[i] : ARM_REAL_ZERO;
+    (void)fprintf(log->file, ",%.9f", (double)(command->tau_ff_nm[i] - model_ff));
   }
   write_values(log, command->tau_ff_nm);
   for (uint8_t i = 0u; i < log->dof; ++i) {

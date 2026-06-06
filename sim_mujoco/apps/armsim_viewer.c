@@ -16,6 +16,7 @@
 #include "armsim/control_log.h"
 #include "armsim/default_arm_config.h"
 #include "armsim/mujoco_arm.h"
+#include "armsim/mujoco_inverse_dynamics_ff.h"
 #include "armsim/sim_impairment.h"
 #include "armsim/sim_loop.h"
 
@@ -54,6 +55,8 @@ typedef struct {
   arm_controller_t controller;
   joint_gravity_ff_t gravity_ff;
   arm_feedforward_t feedforward;
+  mujoco_inverse_dynamics_ff_t inverse_dyn_ff;
+  arm_feedforward_t inverse_dyn_feedforward;
   joint_kinematics_params_t kinematics;
   armsim_impairment_t impairment;
   control_log_t debug_log;
@@ -66,6 +69,7 @@ typedef struct {
   viewer_mode_t mode;
   bool gravity_enabled;
   bool gravity_ff_enabled;
+  bool inverse_dyn_ff_enabled;
   bool contacts_enabled;
   bool harsh_sim_enabled;
   bool tool_drag_enabled;
@@ -239,17 +243,42 @@ static void compute_gravity_ff_log(const viewer_app_t *app, arm_real_t tau_ff_gr
   }
 }
 
+static arm_feedforward_t *active_feedforward(viewer_app_t *app) {
+  if (!app->gravity_enabled) return NULL;
+  if (app->inverse_dyn_ff_enabled) return &app->inverse_dyn_feedforward;
+  if (app->gravity_ff_enabled) return &app->feedforward;
+  return NULL;
+}
+
+static void compute_model_ff_log(viewer_app_t *app, arm_real_t tau_ff_model[ARM_DOF_MAX]) {
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    tau_ff_model[i] = ARM_REAL_ZERO;
+  }
+  arm_feedforward_t *ff = active_feedforward(app);
+  if (!ff) return;
+
+  arm_t ff_arm = app->core;
+  arm_feedforward_t ff_copy = *ff;
+  if (arm_control_step_with_feedforward(&ff_arm, &app->control_ref, NULL, &ff_copy) != ARM_OK) return;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    tau_ff_model[i] = ff_arm.command.tau_ff_nm[i];
+  }
+}
+
 static void debug_log_open(viewer_app_t *app) {
   (void)control_log_open(&app->debug_log, "logs/dynamic_debug.csv", app->core.config.dof);
 }
 
 static void debug_log_step(viewer_app_t *app) {
   arm_real_t tau_ff_gravity[ARM_DOF_MAX];
+  arm_real_t tau_ff_model[ARM_DOF_MAX];
   compute_gravity_ff_log(app, tau_ff_gravity);
+  compute_model_ff_log(app, tau_ff_model);
 
   const control_log_flags_t flags = {
       app->gravity_enabled,
       app->gravity_ff_enabled,
+      app->inverse_dyn_ff_enabled,
       app->contacts_enabled,
       app->harsh_sim_enabled,
   };
@@ -262,6 +291,7 @@ static void debug_log_step(viewer_app_t *app) {
       &app->core.state,
       &app->control_ref,
       tau_ff_gravity,
+      tau_ff_model,
       &app->core.command);
 }
 
@@ -445,12 +475,19 @@ static bool handle_panel_click(viewer_app_t *app, double fb_x, double fb_y, int 
   }
   if (button_hit(fb_x, fb_y, 176, y_harsh, 140, 28)) {
     app->gravity_ff_enabled = !app->gravity_ff_enabled;
+    if (app->gravity_ff_enabled) app->inverse_dyn_ff_enabled = false;
     sync_target_to_current_pose(app);
     return true;
   }
   if (button_hit(fb_x, fb_y, 24, y_tool, 140, 28)) {
     app->tool_drag_enabled = !app->tool_drag_enabled;
     app->tool_drag_active = false;
+    sync_target_to_current_pose(app);
+    return true;
+  }
+  if (button_hit(fb_x, fb_y, 176, y_tool, 140, 28)) {
+    app->inverse_dyn_ff_enabled = !app->inverse_dyn_ff_enabled;
+    if (app->inverse_dyn_ff_enabled) app->gravity_ff_enabled = false;
     sync_target_to_current_pose(app);
     return true;
   }
@@ -630,6 +667,11 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
     sync_target_to_current_pose(app);
   } else if (key == GLFW_KEY_F) {
     app->gravity_ff_enabled = !app->gravity_ff_enabled;
+    if (app->gravity_ff_enabled) app->inverse_dyn_ff_enabled = false;
+    sync_target_to_current_pose(app);
+  } else if (key == GLFW_KEY_I) {
+    app->inverse_dyn_ff_enabled = !app->inverse_dyn_ff_enabled;
+    if (app->inverse_dyn_ff_enabled) app->gravity_ff_enabled = false;
     sync_target_to_current_pose(app);
   } else if (key == GLFW_KEY_T) {
     app->tool_drag_enabled = !app->tool_drag_enabled;
@@ -715,6 +757,7 @@ static void draw_panel(viewer_app_t *app, mjrRect viewport) {
   draw_button(&app->context, 176, viewport.height - 212, 140, 28, "Gravity FF",
               app->gravity_ff_enabled);
   draw_button(&app->context, 24, viewport.height - 248, 140, 28, "Tool Drag", app->tool_drag_enabled);
+  draw_button(&app->context, 176, viewport.height - 248, 140, 28, "InverseDyn", app->inverse_dyn_ff_enabled);
   const float x_rgb[3] = {0.82f, 0.18f, 0.16f};
   const float y_rgb[3] = {0.18f, 0.62f, 0.20f};
   const float z_rgb[3] = {0.18f, 0.35f, 0.82f};
@@ -833,6 +876,13 @@ static void configure_gravity_ff(viewer_app_t *app) {
   app->feedforward = joint_gravity_ff_as_feedforward(&app->gravity_ff);
 }
 
+static int configure_inverse_dynamics_ff(viewer_app_t *app) {
+  const int status = mujoco_inverse_dynamics_ff_init(&app->inverse_dyn_ff, app->model, &app->arm);
+  if (status != ARM_OK) return status;
+  app->inverse_dyn_feedforward = mujoco_inverse_dynamics_ff_as_feedforward(&app->inverse_dyn_ff);
+  return ARM_OK;
+}
+
 static void configure_kinematics(viewer_app_t *app) {
   static const joint_kinematics_params_t kinematics_params = ARMSIM_ARM6_KINEMATICS_PARAMS;
 
@@ -866,6 +916,7 @@ int main(int argc, char **argv) {
   app.mode = VIEWER_MODE_POSE_EDIT;
   app.gravity_enabled = true;
   app.gravity_ff_enabled = true;
+  app.inverse_dyn_ff_enabled = false;
   app.contacts_enabled = true;
   app.harsh_sim_enabled = false;
   arm_config_t config = armsim_default_arm6_config();
@@ -890,6 +941,12 @@ int main(int argc, char **argv) {
   configure_ref_shaper_and_safety(&app);
   configure_state_filter(&app);
   configure_gravity_ff(&app);
+  if (configure_inverse_dynamics_ff(&app) != ARM_OK) {
+    fprintf(stderr, "Failed to initialize inverse dynamics feedforward.\n");
+    mj_deleteData(data);
+    mj_deleteModel(model);
+    return EXIT_FAILURE;
+  }
   configure_kinematics(&app);
   armsim_impairment_config_t impairment_config = armsim_impairment_default_config();
   armsim_impairment_init(&app.impairment, &impairment_config, app.core.config.dof);
@@ -958,7 +1015,7 @@ int main(int argc, char **argv) {
           glfwSetWindowShouldClose(window, GLFW_TRUE);
           break;
         }
-        arm_feedforward_t *feedforward = app.gravity_ff_enabled && app.gravity_enabled ? &app.feedforward : NULL;
+        arm_feedforward_t *feedforward = active_feedforward(&app);
         const int step_status = app.harsh_sim_enabled
                                     ? armsim_step_once_impaired_filtered_with_feedforward(
                                           model,
@@ -1011,6 +1068,7 @@ int main(int argc, char **argv) {
   mjr_freeContext(&app.context);
   mjv_freeScene(&app.scene);
   debug_log_close(&app);
+  mujoco_inverse_dynamics_ff_free(&app.inverse_dyn_ff);
   glfwDestroyWindow(window);
   glfwTerminate();
   mj_deleteData(data);

@@ -502,7 +502,7 @@ int joint_ik_position_solve(
 
   arm_state_t work = *state;
   arm_reference_zero(ref, params->dof);
-  ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID;
 
   for (uint8_t iter = 0u; iter < opt.max_iterations; ++iter) {
     arm_real_t tool_pos[3];
@@ -537,6 +537,7 @@ int joint_ik_position_solve(
   for (uint8_t i = 0u; i < params->dof; ++i) {
     ref->q_ref_rad[i] = work.q_rad[i];
     ref->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+    ref->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
   }
   return ARM_OK;
 }
@@ -573,7 +574,7 @@ int joint_ik_pose_solve(
 
   arm_state_t work = *state;
   arm_reference_zero(ref, params->dof);
-  ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID;
+  ref->flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID;
 
   for (uint8_t iter = 0u; iter < opt.max_iterations; ++iter) {
     arm_real_t tool_pos[3];
@@ -622,6 +623,7 @@ int joint_ik_pose_solve(
   for (uint8_t i = 0u; i < params->dof; ++i) {
     ref->q_ref_rad[i] = work.q_rad[i];
     ref->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+    ref->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
   }
   return ARM_OK;
 }

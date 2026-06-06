@@ -5,6 +5,7 @@
 #include "arm_core/arm_control.h"
 #include "arm_core/arm_feedforward.h"
 #include "arm_common/arm_math.h"
+#include "arm_core/joint_id_fit_ff.h"
 #include "arm_core/joint_pd.h"
 #include "arm_core/joint_sweep.h"
 
@@ -142,6 +143,37 @@ int main(void) {
   arm.command.tau_ff_nm[0] = 0.5;
   assert(arm_safety_apply(&safety, &arm.state, &arm.command) == ARM_OK);
   assert(arm.command.tau_ff_nm[0] == 0.0);
+
+  joint_id_fit_ff_params_t fit_params = {0};
+  fit_params.dof = arm.config.dof;
+  fit_params.feature_count = 3u;
+  fit_params.features[0] = (joint_id_fit_feature_t){JOINT_ID_FIT_FEATURE_BIAS, 0u, 0u};
+  fit_params.features[1] = (joint_id_fit_feature_t){JOINT_ID_FIT_FEATURE_DQ, 0u, 0u};
+  fit_params.features[2] = (joint_id_fit_feature_t){JOINT_ID_FIT_FEATURE_DDQ, 0u, 0u};
+  fit_params.coeff_nm[0][0] = ARM_REAL(0.2);
+  fit_params.coeff_nm[0][1] = ARM_REAL(0.3);
+  fit_params.coeff_nm[0][2] = ARM_REAL(0.4);
+
+  joint_id_fit_ff_t fit_ff;
+  joint_id_fit_ff_init(&fit_ff, &fit_params);
+  arm_feedforward_t fit_feedforward = joint_id_fit_ff_as_feedforward(&fit_ff);
+  arm_reference_zero(&ref, arm.config.dof);
+  ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID;
+  ref.dq_ref_rad_s[0] = ARM_REAL(2.0);
+  ref.ddq_ref_rad_s2[0] = ARM_REAL(3.0);
+  arm.state.flags = ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID;
+  arm.state.dof = arm.config.dof;
+  assert(arm_control_step_with_feedforward(&arm, &ref, NULL, &fit_feedforward) == ARM_OK);
+  assert(near_zero(arm.command.tau_ff_nm[0] - ARM_REAL(1.5)));
+
+  joint_id_fit_ff_params_t zero_fit_params = {0};
+  zero_fit_params.dof = arm.config.dof;
+  zero_fit_params.feature_count = 1u;
+  zero_fit_params.features[0] = (joint_id_fit_feature_t){JOINT_ID_FIT_FEATURE_BIAS, 0u, 0u};
+  joint_id_fit_ff_init(&fit_ff, &zero_fit_params);
+  fit_feedforward = joint_id_fit_ff_as_feedforward(&fit_ff);
+  assert(arm_control_step_with_feedforward(&arm, &ref, NULL, &fit_feedforward) == ARM_OK);
+  assert(near_zero(arm.command.tau_ff_nm[0]));
 
   return 0;
 }

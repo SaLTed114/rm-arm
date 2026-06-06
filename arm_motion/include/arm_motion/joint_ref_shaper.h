@@ -18,6 +18,7 @@ typedef struct {
   arm_real_t q_goal_rad[ARM_DOF_MAX];
   arm_real_t q_ref_rad[ARM_DOF_MAX];
   arm_real_t dq_ref_rad_s[ARM_DOF_MAX];
+  arm_real_t ddq_ref_rad_s2[ARM_DOF_MAX];
   bool initialized;
 } joint_ref_shaper_t;
 

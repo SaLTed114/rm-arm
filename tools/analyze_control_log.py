@@ -19,10 +19,12 @@ PREFIX_ALIASES = {
     "dq": ("dq_filt", "dq"),
     "q_ref": ("q_ref",),
     "dq_ref": ("dq_ref",),
+    "ddq_ref": ("ddq_ref",),
     "tau_cmd": ("tau_cmd", "cmd_tau_ff"),
     "q_meas": ("q_meas",),
     "dq_meas": ("dq_meas",),
     "tau_ff_gravity": ("tau_ff_gravity",),
+    "tau_ff_model": ("tau_ff_model",),
     "tau_fb": ("tau_fb",),
     "mj_ctrl": ("mj_ctrl",),
     "tau_est": ("tau_est",),
@@ -203,6 +205,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         dq = series(rows, columns["dq"][joint])
         q_ref = series(rows, columns["q_ref"][joint])
         dq_ref = series(rows, columns["dq_ref"][joint])
+        ddq_ref = optional_series(columns, "ddq_ref", joint, rows)
         tau_cmd = series(rows, columns["tau_cmd"][joint])
         q_err = [actual - ref for actual, ref in zip(q, q_ref)]
         dq_err = [actual - ref for actual, ref in zip(dq, dq_ref)]
@@ -216,6 +219,7 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         mj_ctrl = optional_series(columns, "mj_ctrl", joint, rows)
         tau_fb = optional_series(columns, "tau_fb", joint, rows)
         tau_ff_gravity = optional_series(columns, "tau_ff_gravity", joint, rows)
+        tau_ff_model = optional_series(columns, "tau_ff_model", joint, rows)
         q_meas = optional_series(columns, "q_meas", joint, rows)
         dq_meas = optional_series(columns, "dq_meas", joint, rows)
         ref_range = max(q_ref) - min(q_ref)
@@ -248,6 +252,11 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             metrics["steady_tau_fb_rms"] = rms(tau_fb[steady_start:])
         if tau_ff_gravity is not None:
             metrics["tau_ff_gravity_rms"] = rms(tau_ff_gravity)
+        if tau_ff_model is not None:
+            metrics["tau_ff_model_rms"] = rms(tau_ff_model)
+        if ddq_ref is not None:
+            metrics["ddq_ref_rms"] = rms(ddq_ref)
+            metrics["ddq_ref_max_abs"] = max_abs(ddq_ref)
         if q_meas is not None:
             metrics["q_filter_delta_rms"] = rms([filt - meas for filt, meas in zip(q, q_meas)])
         if dq_meas is not None:
