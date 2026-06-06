@@ -9,13 +9,13 @@ Rules for this directory:
 - No dynamic allocation.
 - Public headers live under `include/arm_core/`.
 - Source files are grouped internally under `src/core`, `src/controllers`,
-  `src/estimation`, `src/feedforward`, `src/reference`, and `src/safety`; this
+  `src/estimation`, `src/feedforward`, and `src/safety`; this
   does not change public include paths.
 - Host-side tests live outside this directory. A future Keil sync script should
   run the tests first, then copy only the approved `arm_core/include` and
   `arm_core/src` files.
 - Platform code should keep one `arm_t`, update `arm.state` each control tick,
-  shape a goal into an `arm_reference_t`, call `arm_control_step()` or
+  provide an `arm_reference_t`, call `arm_control_step()` or
   `arm_control_step_with_feedforward()`, apply final safety limits, and send
   `arm.command` through the platform actuator adapter.
 - Controllers are plain C contexts adapted by `arm_controller_t`. `joint_pd`
@@ -23,15 +23,10 @@ Rules for this directory:
   verification.
 - `joint_state_filter` is a simple estimation layer for normalized measured
   state. Platform adapters should not hide heavy filtering outside the core.
-- `joint_ref_shaper` is a simple joint-space reference conditioner for
-  manual/teleop-style targets, with position, velocity, and acceleration
-  limits.
 - Feedforward modules are plain C contexts adapted by `arm_feedforward_t`.
   They run in parallel with the feedback controller and add model-based torque
   into the final command before command limiting. `joint_gravity_ff` is the
   current config-driven gravity compensation module.
-- `joint_kinematics` provides lightweight FK, position Jacobian, and
-  position-only IK for reusable Cartesian target generation.
 - `arm_safety` is a final command-side guard for invalid state, torque limits,
   soft position limits, and overspeed protection.
 - Control performance metrics and log analysis live in PC-side `tools/`.
@@ -49,14 +44,10 @@ Joint sign convention:
   direction.
 - `tau_est_nm > 0` uses the same torque direction.
 
-`arm_reference_t` is the per-cycle target consumed by controllers. Reference
-sources should feed this common shape: manual/teleop targets can pass through
-`joint_ref_shaper`, while a future trajectory generator can output
-`arm_reference_t` directly through a future `joint_trajectory_step()` path.
-These reference sources are alternatives by default; the trajectory path should
-not be automatically fed through `joint_ref_shaper` unless that behavior is
-explicitly desired. `arm_safety` remains a final command-side guard; it does not
-replace reference source logic.
+`arm_reference_t` is the per-cycle target consumed by controllers. It is
+generated outside `arm_core`, for example by `arm_motion` manual/teleop shaping,
+IK, or future trajectory sources. `arm_safety` remains a final command-side
+guard; it does not replace reference source logic.
 
 `arm_command_t` is the final actuator command abstraction; a pure torque
 controller and any enabled feedforward modules write `tau_ff_nm` with zero
@@ -91,14 +82,14 @@ before calling core logic:
   timestamps, and validity checks. Filtering or estimation should be explicit in
   `arm_core`, for example through `joint_state_filter`.
 
-`arm_reference_t` is the per-cycle controller target. It is produced by exactly
-one active reference source:
+`arm_reference_t` is the per-cycle controller target. It is produced outside
+`arm_core` by exactly one active motion or reference source:
 
-- Manual or teleop targets should pass through `joint_ref_shaper`.
-- A future trajectory source may output `arm_reference_t` directly through a
-  `joint_trajectory_step()` path.
-- These sources are alternatives by default; do not feed trajectory output
-  through `joint_ref_shaper` unless that behavior is explicitly requested.
+- Manual or teleop targets can pass through `arm_motion` joint reference
+  shaping.
+- A future trajectory source may output `arm_reference_t` directly.
+- These sources are alternatives by default; do not reshape trajectory output
+  unless that behavior is explicitly requested.
 - Reference feedforward fields are not consumed by the standard feedback
   controller path. Model compensation such as gravity should run through
   `arm_feedforward_t` instead of being hidden inside a controller or reference

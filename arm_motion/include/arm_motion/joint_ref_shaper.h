@@ -1,5 +1,5 @@
-#ifndef ARM_CORE_JOINT_REF_SHAPER_H_
-#define ARM_CORE_JOINT_REF_SHAPER_H_
+#ifndef ARM_MOTION_JOINT_REF_SHAPER_H_
+#define ARM_MOTION_JOINT_REF_SHAPER_H_
 
 #include <stdbool.h>
 

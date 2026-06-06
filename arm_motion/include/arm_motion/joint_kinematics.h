@@ -1,5 +1,5 @@
-#ifndef ARM_CORE_JOINT_KINEMATICS_H_
-#define ARM_CORE_JOINT_KINEMATICS_H_
+#ifndef ARM_MOTION_JOINT_KINEMATICS_H_
+#define ARM_MOTION_JOINT_KINEMATICS_H_
 
 #include "arm_core/arm.h"
 

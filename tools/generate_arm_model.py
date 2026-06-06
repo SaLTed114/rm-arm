@@ -273,7 +273,7 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
         "#define ARMSIM_ARM6_SIM_CONFIG_H_",
         "",
         '#include "arm_core/joint_gravity_ff.h"',
-        '#include "arm_core/joint_kinematics.h"',
+        '#include "arm_motion/joint_kinematics.h"',
         '#include "arm_core/arm_types.h"',
         "",
         "#define ARMSIM_ARM6_TORQUE_LIMITS_NM \\",

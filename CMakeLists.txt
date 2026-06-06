@@ -14,6 +14,7 @@ if(ARMSIM_BUILD_TESTS)
 endif()
 
 add_subdirectory(arm_core)
+add_subdirectory(arm_motion)
 
 if(ARMSIM_BUILD_SIM)
   add_subdirectory(sim_mujoco)
@@ -23,6 +24,10 @@ if(ARMSIM_BUILD_TESTS)
   add_executable(test_core_types tests/test_core_types.c)
   target_link_libraries(test_core_types PRIVATE arm_core)
   add_test(NAME test_core_types COMMAND test_core_types)
+
+  add_executable(test_motion_types tests/test_motion_types.c)
+  target_link_libraries(test_motion_types PRIVATE arm_motion)
+  add_test(NAME test_motion_types COMMAND test_motion_types)
 
   add_executable(test_core_contract tests/test_core_contract.c)
   target_link_libraries(test_core_contract PRIVATE arm_core)

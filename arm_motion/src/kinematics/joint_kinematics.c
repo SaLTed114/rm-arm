@@ -1,4 +1,4 @@
-#include "arm_core/joint_kinematics.h"
+#include "arm_motion/joint_kinematics.h"
 
 #include "arm_core/arm_math.h"
 

@@ -1,6 +1,9 @@
 if(NOT TARGET arm_core)
   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../arm_core ${CMAKE_CURRENT_BINARY_DIR}/arm_core)
 endif()
+if(NOT TARGET arm_motion)
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../arm_motion ${CMAKE_CURRENT_BINARY_DIR}/arm_motion)
+endif()
 
 get_filename_component(ARMSIM_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 set(MUJOCO_ROOT "${ARMSIM_ROOT}/third_party/mujoco" CACHE PATH "Path to the MuJoCo distribution")
@@ -65,6 +68,7 @@ target_include_directories(armsim_mujoco
 target_link_libraries(armsim_mujoco
   PUBLIC
     arm_core
+    arm_motion
     mujoco::mujoco
 )
 

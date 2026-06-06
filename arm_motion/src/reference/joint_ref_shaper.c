@@ -1,4 +1,4 @@
-#include "arm_core/joint_ref_shaper.h"
+#include "arm_motion/joint_ref_shaper.h"
 
 #include "arm_core/arm_math.h"
 

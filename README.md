@@ -4,7 +4,8 @@ ArmSim is split into a portable control core and a MuJoCo simulation harness.
 
 ## Layout
 
-- `arm_core/`: pure C reusable arm core, including interfaces, reference sources, controllers, safety, and verification helpers. This is the part intended to be synced into a Keil/STM32F4xx project.
+- `arm_core/`: pure C reusable arm core for `state + reference -> command`, including interfaces, controllers, feedforward, estimation, safety, and verification helpers.
+- `arm_motion/`: pure C reusable motion/reference generation code, including joint reference shaping and lightweight kinematics/IK.
 - `sim_mujoco/`: MuJoCo adapters, placeholder model, viewer, headless verifier, and CSV logging.
 - `configs/`: human-maintained arm model and tuning source files. The current placeholder arm is defined by `configs/arm6_placeholder.yaml`.
 - `tools/`: PC-side generation and analysis tools. These are not part of the embedded core.
