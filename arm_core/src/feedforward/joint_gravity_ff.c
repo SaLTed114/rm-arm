@@ -1,6 +1,6 @@
 #include "arm_core/joint_gravity_ff.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 typedef struct {
   arm_real_t rot[9];

@@ -1,6 +1,6 @@
 #include "arm_motion/joint_ref_shaper.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 static void default_params(joint_ref_shaper_params_t *params) {
   if (!params) return;

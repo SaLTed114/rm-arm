@@ -1,4 +1,4 @@
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 #include <math.h>
 
@@ -36,6 +36,12 @@ void arm_vec3_zero(arm_real_t out[3]) {
   out[2] = ARM_REAL_ZERO;
 }
 
+void arm_vec3_copy(const arm_real_t in[3], arm_real_t out[3]) {
+  out[0] = in[0];
+  out[1] = in[1];
+  out[2] = in[2];
+}
+
 void arm_vec3_add(const arm_real_t a[3], const arm_real_t b[3], arm_real_t out[3]) {
   out[0] = a[0] + b[0];
   out[1] = a[1] + b[1];
@@ -64,6 +70,10 @@ void arm_vec3_cross(const arm_real_t a[3], const arm_real_t b[3], arm_real_t out
   out[2] = a[0] * b[1] - a[1] * b[0];
 }
 
+arm_real_t arm_vec3_norm(const arm_real_t value[3]) {
+  return ARM_REAL(sqrt((double)arm_vec3_dot(value, value)));
+}
+
 void arm_mat3_identity(arm_real_t out[9]) {
   out[0] = ARM_REAL_ONE;
   out[1] = ARM_REAL_ZERO;
@@ -74,6 +84,24 @@ void arm_mat3_identity(arm_real_t out[9]) {
   out[6] = ARM_REAL_ZERO;
   out[7] = ARM_REAL_ZERO;
   out[8] = ARM_REAL_ONE;
+}
+
+void arm_mat3_copy(const arm_real_t in[9], arm_real_t out[9]) {
+  for (uint8_t i = 0u; i < 9u; ++i) {
+    out[i] = in[i];
+  }
+}
+
+void arm_mat3_transpose(const arm_real_t in[9], arm_real_t out[9]) {
+  out[0] = in[0];
+  out[1] = in[3];
+  out[2] = in[6];
+  out[3] = in[1];
+  out[4] = in[4];
+  out[5] = in[7];
+  out[6] = in[2];
+  out[7] = in[5];
+  out[8] = in[8];
 }
 
 void arm_mat3_mul(const arm_real_t a[9], const arm_real_t b[9], arm_real_t out[9]) {

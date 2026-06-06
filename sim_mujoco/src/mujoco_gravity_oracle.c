@@ -1,6 +1,6 @@
 #include "armsim/mujoco_gravity_oracle.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 int mujoco_gravity_oracle_init(const mjModel *model, mujoco_gravity_oracle_t *oracle) {
   if (!model || !oracle) return ARM_ERR_NULL;

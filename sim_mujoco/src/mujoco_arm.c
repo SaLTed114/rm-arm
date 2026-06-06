@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "arm_core/arm.h"
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 static int set_error(char *error, size_t error_size, const char *message, const char *name) {
   if (error && error_size > 0u) {

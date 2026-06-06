@@ -8,8 +8,8 @@ Rules for this directory:
 - No MuJoCo, GLFW, HAL, FreeRTOS, stdio, or filesystem dependencies.
 - No dynamic allocation.
 - Public headers live under `include/arm_motion/`.
-- `arm_motion` may depend on `arm_core` types and math helpers; `arm_core` must
-  not depend on `arm_motion`.
+- `arm_motion` may depend on `arm_core` semantic types and `arm_common` math
+  helpers; `arm_core` must not depend on `arm_motion`.
 
 Current modules:
 

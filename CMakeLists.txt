@@ -13,6 +13,7 @@ if(ARMSIM_BUILD_TESTS)
   enable_testing()
 endif()
 
+add_subdirectory(arm_common)
 add_subdirectory(arm_core)
 add_subdirectory(arm_motion)
 

@@ -1,6 +1,6 @@
 #include "arm_core/joint_state_filter.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 static arm_real_t positive_or_zero(arm_real_t value) {
   return value > ARM_REAL_ZERO ? value : ARM_REAL_ZERO;

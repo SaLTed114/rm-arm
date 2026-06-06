@@ -5,7 +5,7 @@
 
 #include <mujoco/mujoco.h>
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 #include "arm_core/joint_sweep.h"
 #include "armsim/csv_logger.h"
 #include "armsim/default_arm_config.h"

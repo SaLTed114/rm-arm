@@ -1,6 +1,6 @@
 #include "arm_core/arm_safety.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 static bool state_has_required_measurements(const arm_state_t *state) {
   return (state->flags & (ARM_STATE_Q_VALID | ARM_STATE_DQ_VALID)) ==

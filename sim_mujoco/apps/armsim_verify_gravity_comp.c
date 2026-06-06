@@ -6,7 +6,7 @@
 
 #include "arm_core/arm.h"
 #include "arm_core/arm_control.h"
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 #include "arm_core/joint_gravity_ff.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/default_arm_config.h"

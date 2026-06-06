@@ -1,6 +1,6 @@
 #include "arm_motion/joint_kinematics.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 #include <math.h>
 
@@ -12,34 +12,6 @@ typedef struct {
   arm_real_t joint_pos[3];
   arm_real_t joint_axis[3];
 } joint_kinematics_pose_t;
-
-static void copy_vec3(const arm_real_t in[3], arm_real_t out[3]) {
-  out[0] = in[0];
-  out[1] = in[1];
-  out[2] = in[2];
-}
-
-static void copy_mat3(const arm_real_t in[9], arm_real_t out[9]) {
-  for (uint8_t i = 0u; i < 9u; ++i) {
-    out[i] = in[i];
-  }
-}
-
-static void transpose_mat3(const arm_real_t in[9], arm_real_t out[9]) {
-  out[0] = in[0];
-  out[1] = in[3];
-  out[2] = in[6];
-  out[3] = in[1];
-  out[4] = in[4];
-  out[5] = in[7];
-  out[6] = in[2];
-  out[7] = in[5];
-  out[8] = in[8];
-}
-
-static arm_real_t vec3_norm(const arm_real_t value[3]) {
-  return ARM_REAL(sqrt((double)arm_vec3_dot(value, value)));
-}
 
 static int build_poses(
     const joint_kinematics_params_t *params,
@@ -61,7 +33,7 @@ static int build_poses(
     arm_real_t parent_pos[3];
     if (parent) {
       for (uint8_t j = 0u; j < 9u; ++j) parent_rot[j] = parent->rot[j];
-      copy_vec3(parent->pos, parent_pos);
+      arm_vec3_copy(parent->pos, parent_pos);
     } else {
       arm_mat3_identity(parent_rot);
       arm_vec3_zero(parent_pos);
@@ -70,7 +42,7 @@ static int build_poses(
     arm_real_t offset_world[3];
     arm_mat3_mul_vec3(parent_rot, body->pos, offset_world);
     arm_vec3_add(parent_pos, offset_world, poses[i].joint_pos);
-    copy_vec3(poses[i].joint_pos, poses[i].pos);
+    arm_vec3_copy(poses[i].joint_pos, poses[i].pos);
     arm_mat3_mul_vec3(parent_rot, body->axis, poses[i].joint_axis);
 
     if (body->joint >= 0) {
@@ -112,7 +84,7 @@ static int tool_pose_from_poses(
   arm_real_t tool_offset_world[3];
   arm_mat3_mul_vec3(tool_body->rot, params->tool_pos, tool_offset_world);
   arm_vec3_add(tool_body->pos, tool_offset_world, tool_pos_world);
-  copy_mat3(tool_body->rot, tool_rot_world);
+  arm_mat3_copy(tool_body->rot, tool_rot_world);
   return ARM_OK;
 }
 
@@ -415,7 +387,7 @@ static void rotation_error_vector(
     arm_real_t error[3]) {
   arm_real_t current_rot_t[9];
   arm_real_t rot_err[9];
-  transpose_mat3(current_rot, current_rot_t);
+  arm_mat3_transpose(current_rot, current_rot_t);
   arm_mat3_mul(target_rot, current_rot_t, rot_err);
 
   const arm_real_t trace = rot_err[0] + rot_err[4] + rot_err[8];
@@ -540,7 +512,7 @@ int joint_ik_position_solve(
 
     arm_real_t error[3];
     arm_vec3_sub(target_pos_world, tool_pos, error);
-    if (vec3_norm(error) <= opt.tolerance_m) break;
+    if (arm_vec3_norm(error) <= opt.tolerance_m) break;
 
     arm_real_t inv_a[9];
     if (compute_dls_inverse(params->dof, jacobian, opt.damping, inv_a) != ARM_OK) break;
@@ -614,7 +586,8 @@ int joint_ik_pose_solve(
     arm_real_t rot_error[3];
     arm_vec3_sub(target_pos_world, tool_pos, pos_error);
     rotation_error_vector(target_rot_world, tool_rot, rot_error);
-    if (vec3_norm(pos_error) <= opt.pos_tolerance_m && vec3_norm(rot_error) <= opt.rot_tolerance_rad) break;
+    if (arm_vec3_norm(pos_error) <= opt.pos_tolerance_m &&
+        arm_vec3_norm(rot_error) <= opt.rot_tolerance_rad) break;
 
     arm_real_t task_error[JOINT_KINEMATICS_TASK_MAX] = {0};
     arm_real_t task_jacobian[JOINT_KINEMATICS_TASK_MAX * ARM_DOF_MAX] = {0};

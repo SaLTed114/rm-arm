@@ -4,7 +4,7 @@
 
 #include "arm_core/joint_gravity_ff.h"
 #include "arm_motion/joint_kinematics.h"
-#include "arm_core/arm_types.h"
+#include "arm_common/arm_types.h"
 
 #define ARMSIM_ARM6_TORQUE_LIMITS_NM \
   { ARM_REAL(10), ARM_REAL(40), ARM_REAL(30), ARM_REAL(8), ARM_REAL(8), ARM_REAL(8) }

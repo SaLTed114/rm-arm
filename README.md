@@ -1,9 +1,10 @@
 # ArmSim
 
-ArmSim is split into a portable control core and a MuJoCo simulation harness.
+ArmSim is split into portable C modules and a MuJoCo simulation harness.
 
 ## Layout
 
+- `arm_common/`: pure C shared numeric basics and math helpers used by core, motion, and simulation code.
 - `arm_core/`: pure C reusable arm core for `state + reference -> command`, including interfaces, controllers, feedforward, estimation, safety, and verification helpers.
 - `arm_motion/`: pure C reusable motion/reference generation code, including joint reference shaping and lightweight kinematics/IK.
 - `sim_mujoco/`: MuJoCo adapters, placeholder model, viewer, headless verifier, and CSV logging.

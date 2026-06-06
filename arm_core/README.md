@@ -11,6 +11,8 @@ Rules for this directory:
 - Source files are grouped internally under `src/core`, `src/controllers`,
   `src/estimation`, `src/feedforward`, and `src/safety`; this
   does not change public include paths.
+- Shared scalar types, DOF constants, status values, and math helpers live in
+  sibling module `arm_common`.
 - Host-side tests live outside this directory. A future Keil sync script should
   run the tests first, then copy only the approved `arm_core/include` and
   `arm_core/src` files.

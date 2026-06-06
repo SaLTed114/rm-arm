@@ -2,7 +2,7 @@
 #include <math.h>
 
 #include "arm_core/arm.h"
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 #include "arm_motion/joint_kinematics.h"
 #include "arm_motion/joint_ref_shaper.h"
 

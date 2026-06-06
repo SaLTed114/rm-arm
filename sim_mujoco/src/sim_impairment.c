@@ -1,6 +1,6 @@
 #include "armsim/sim_impairment.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/sim_loop.h"
 

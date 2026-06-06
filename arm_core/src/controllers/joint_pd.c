@@ -1,6 +1,6 @@
 #include "arm_core/joint_pd.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 static int joint_pd_step(void *ctx, arm_t *arm, const arm_reference_t *ref) {
   joint_pd_t *pd = (joint_pd_t *)ctx;

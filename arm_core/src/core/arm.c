@@ -1,6 +1,6 @@
 #include "arm_core/arm.h"
 
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 
 int arm_config_validate(const arm_config_t *config) {
   if (!config) return ARM_ERR_NULL;

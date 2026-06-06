@@ -2,7 +2,7 @@
 #include <math.h>
 
 #include "arm_core/arm.h"
-#include "arm_core/arm_math.h"
+#include "arm_common/arm_math.h"
 #include "arm_core/joint_state_filter.h"
 
 static int near(arm_real_t lhs, arm_real_t rhs) {
