@@ -299,6 +299,9 @@ def generate_sim_config_header(config: dict[str, Any], config_path: str) -> str:
         "#define ARMSIM_ARM6_DDQ_LIMITS_RAD_S2 \\",
         f"  {c_array(control['reference']['ddq_limits_rad_s2'])}",
         "",
+        "#define ARMSIM_ARM6_DDDQ_LIMITS_RAD_S3 \\",
+        f"  {c_array(control['reference']['dddq_limits_rad_s3'])}",
+        "",
         "#define ARMSIM_ARM6_STATE_FILTER_PARAMS \\",
         "  { \\",
     ])

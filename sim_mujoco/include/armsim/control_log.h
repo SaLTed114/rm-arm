@@ -25,6 +25,7 @@ void control_log_close(control_log_t *log);
 bool control_log_write_header(control_log_t *log);
 bool control_log_write_step(
     control_log_t *log,
+    const mjModel *model,
     const mjData *data,
     const mujoco_arm_t *arm,
     const control_log_flags_t *flags,

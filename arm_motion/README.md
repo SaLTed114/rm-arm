@@ -14,7 +14,9 @@ Rules for this directory:
 Current modules:
 
 - `joint_ref_shaper` conditions manual or teleop-style joint goals into
-  bounded `arm_reference_t` output.
+  jerk-, acceleration-, velocity-, and position-bounded `arm_reference_t`
+  output. It is reactive to changing goals and is not a queued trajectory
+  generator.
 - `joint_kinematics` provides lightweight FK, position/spatial Jacobians,
   position IK, and pose IK for Cartesian target generation.
 

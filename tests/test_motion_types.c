@@ -164,6 +164,7 @@ int main(void) {
     shaper_params.q_max_rad[i] = 0.5;
     shaper_params.dq_limit_rad_s[i] = 1.0;
     shaper_params.ddq_limit_rad_s2[i] = 2.0;
+    shaper_params.dddq_limit_rad_s3[i] = 6.0;
   }
 
   joint_ref_shaper_t shaper;
@@ -178,13 +179,25 @@ int main(void) {
   assert(joint_ref_shaper_step(&shaper, &state, &goal_ref, &shaped_ref) == ARM_OK);
   assert(shaper.q_goal_rad[0] == 0.5);
   assert(shaped_ref.flags & ARM_REFERENCE_DDQ_VALID);
-  assert(shaped_ref.dq_ref_rad_s[0] <= 0.2 + 1.0e-9);
+  assert(shaped_ref.dq_ref_rad_s[0] <= 0.06 + 1.0e-9);
   assert(shaped_ref.dq_ref_rad_s[0] <= 1.0 + 1.0e-9);
   assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) <= 2.0 + 1.0e-9);
+  assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) <= 0.6 + 1.0e-9);
+  const arm_real_t first_ddq = shaped_ref.ddq_ref_rad_s2[0];
   const arm_real_t first_dq = shaped_ref.dq_ref_rad_s[0];
   assert(joint_ref_shaper_step(&shaper, &state, &goal_ref, &shaped_ref) == ARM_OK);
   assert(shaped_ref.dq_ref_rad_s[0] - first_dq <= 0.2 + 1.0e-9);
   assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) <= 2.0 + 1.0e-9);
+  assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0] - first_ddq) <= 0.6 + 1.0e-9);
+
+  for (uint8_t step = 0u; step < 80u; ++step) {
+    assert(joint_ref_shaper_step(&shaper, &state, &goal_ref, &shaped_ref) == ARM_OK);
+    assert(shaped_ref.dq_ref_rad_s[0] <= 1.0 + 1.0e-9);
+    assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) <= 2.0 + 1.0e-9);
+  }
+  assert(arm_abs(shaped_ref.q_ref_rad[0] - 0.5) < 1.0e-6);
+  assert(arm_abs(shaped_ref.dq_ref_rad_s[0]) < 1.0e-6);
+  assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) < 1.0e-6);
 
   return 0;
 }

@@ -284,6 +284,7 @@ static void debug_log_step(viewer_app_t *app) {
   };
   (void)control_log_write_step(
       &app->debug_log,
+      app->model,
       app->data,
       &app->arm,
       &flags,
@@ -834,6 +835,7 @@ static void configure_pd_defaults(viewer_app_t *app) {
 static void configure_ref_shaper_and_safety(viewer_app_t *app) {
   static const arm_real_t dq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DQ_LIMITS_RAD_S;
   static const arm_real_t ddq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DDQ_LIMITS_RAD_S2;
+  static const arm_real_t dddq_limits[ARM_DEFAULT_DOF] = ARMSIM_ARM6_DDDQ_LIMITS_RAD_S3;
 
   joint_ref_shaper_params_t shaper_params = {0};
   arm_safety_init(&app->safety, app->core.config.dof);
@@ -846,6 +848,7 @@ static void configure_ref_shaper_and_safety(viewer_app_t *app) {
     shaper_params.q_max_rad[i] = ARM_REAL(high);
     shaper_params.dq_limit_rad_s[i] = dq_limits[i];
     shaper_params.ddq_limit_rad_s2[i] = ddq_limits[i];
+    shaper_params.dddq_limit_rad_s3[i] = dddq_limits[i];
 
     arm_safety_set_joint_params(
         &app->safety,

@@ -150,6 +150,8 @@ endif()
 
 if(GLFW_TARGET)
   find_package(OpenGL REQUIRED)
+  target_compile_definitions(armsim_control_benchmark PRIVATE ARMSIM_BENCHMARK_WITH_GUI=1)
+  target_link_libraries(armsim_control_benchmark PRIVATE ${GLFW_TARGET} OpenGL::GL)
   add_executable(armsim_viewer apps/armsim_viewer.c)
   target_link_libraries(armsim_viewer PRIVATE armsim_mujoco ${GLFW_TARGET} OpenGL::GL)
   copy_mujoco_runtime(armsim_viewer)

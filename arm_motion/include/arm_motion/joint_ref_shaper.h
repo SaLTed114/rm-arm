@@ -10,6 +10,7 @@ typedef struct {
   arm_real_t q_max_rad[ARM_DOF_MAX];
   arm_real_t dq_limit_rad_s[ARM_DOF_MAX];
   arm_real_t ddq_limit_rad_s2[ARM_DOF_MAX];
+  arm_real_t dddq_limit_rad_s3[ARM_DOF_MAX];
 } joint_ref_shaper_params_t;
 
 typedef struct {

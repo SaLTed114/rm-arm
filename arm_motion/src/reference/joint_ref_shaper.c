@@ -1,5 +1,7 @@
 #include "arm_motion/joint_ref_shaper.h"
 
+#include <math.h>
+
 #include "arm_common/arm_math.h"
 
 static void default_params(joint_ref_shaper_params_t *params) {
@@ -10,11 +12,31 @@ static void default_params(joint_ref_shaper_params_t *params) {
     params->q_max_rad[i] = +ARM_REAL_PI;
     params->dq_limit_rad_s[i] = ARM_REAL_ONE;
     params->ddq_limit_rad_s2[i] = ARM_REAL(4.0);
+    params->dddq_limit_rad_s3[i] = ARM_REAL(40.0);
   }
 }
 
 static arm_real_t sanitize_positive(arm_real_t value) {
   return value > ARM_REAL_ZERO ? value : ARM_REAL_ZERO;
+}
+
+static arm_real_t sign_nonzero(arm_real_t value) {
+  return value >= ARM_REAL_ZERO ? ARM_REAL_ONE : -ARM_REAL_ONE;
+}
+
+static arm_real_t min_positive(arm_real_t a, arm_real_t b) {
+  if (a <= ARM_REAL_ZERO) return b;
+  if (b <= ARM_REAL_ZERO) return a;
+  return a < b ? a : b;
+}
+
+static arm_real_t stopping_speed(arm_real_t err_abs, arm_real_t ddq_limit, arm_real_t dq_limit) {
+  if (err_abs <= ARM_REAL_ZERO) return ARM_REAL_ZERO;
+  if (ddq_limit <= ARM_REAL_ZERO) return dq_limit;
+
+  const arm_real_t value = ARM_REAL(2.0) * ddq_limit * err_abs;
+  const arm_real_t speed = ARM_REAL(sqrt((double)value));
+  return min_positive(speed, dq_limit);
 }
 
 void joint_ref_shaper_init(
@@ -86,41 +108,73 @@ int joint_ref_shaper_step(
 
     const arm_real_t dq_limit = sanitize_positive(shaper->params.dq_limit_rad_s[i]);
     const arm_real_t ddq_limit = sanitize_positive(shaper->params.ddq_limit_rad_s2[i]);
+    const arm_real_t dddq_limit = sanitize_positive(shaper->params.dddq_limit_rad_s3[i]);
     const arm_real_t err = shaper->q_goal_rad[i] - shaper->q_ref_rad[i];
+    const arm_real_t err_abs = arm_abs(err);
     const arm_real_t prev_dq = shaper->dq_ref_rad_s[i];
+    const arm_real_t prev_ddq = shaper->ddq_ref_rad_s2[i];
+
+    if (dt <= ARM_REAL_ZERO) {
+      shaper->q_ref_rad[i] = shaper->q_goal_rad[i];
+      shaper->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+      shaper->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
+      shaped_ref->q_ref_rad[i] = shaper->q_ref_rad[i];
+      shaped_ref->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+      shaped_ref->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
+      continue;
+    }
+
+    const arm_real_t q_tol = ARM_REAL(1e-5);
+    const arm_real_t dq_tol = ARM_REAL(1e-4);
+    const arm_real_t ddq_tol = ARM_REAL(1e-3);
+    if (err_abs <= q_tol && arm_abs(prev_dq) <= dq_tol && arm_abs(prev_ddq) <= ddq_tol) {
+      shaper->q_ref_rad[i] = shaper->q_goal_rad[i];
+      shaper->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+      shaper->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
+      shaped_ref->q_ref_rad[i] = shaper->q_goal_rad[i];
+      shaped_ref->dq_ref_rad_s[i] = ARM_REAL_ZERO;
+      shaped_ref->ddq_ref_rad_s2[i] = ARM_REAL_ZERO;
+      continue;
+    }
 
     arm_real_t desired_dq = ARM_REAL_ZERO;
-    if (dt > ARM_REAL_ZERO) {
+    if (dq_limit > ARM_REAL_ZERO) {
+      desired_dq = sign_nonzero(err) * stopping_speed(err_abs, ddq_limit, dq_limit);
+    } else {
       desired_dq = err / dt;
     }
     if (dq_limit > ARM_REAL_ZERO) {
       desired_dq = arm_clamp(desired_dq, -dq_limit, dq_limit);
     }
 
-    arm_real_t next_dq = desired_dq;
-    if (ddq_limit > ARM_REAL_ZERO && dt > ARM_REAL_ZERO) {
-      const arm_real_t max_delta_dq = ddq_limit * dt;
-      next_dq = arm_clamp(next_dq, shaper->dq_ref_rad_s[i] - max_delta_dq,
-                          shaper->dq_ref_rad_s[i] + max_delta_dq);
+    arm_real_t desired_ddq = (desired_dq - prev_dq) / dt;
+    if (ddq_limit > ARM_REAL_ZERO) {
+      desired_ddq = arm_clamp(desired_ddq, -ddq_limit, ddq_limit);
     }
+
+    arm_real_t next_ddq = desired_ddq;
+    if (dddq_limit > ARM_REAL_ZERO) {
+      const arm_real_t max_delta_ddq = dddq_limit * dt;
+      next_ddq = arm_clamp(desired_ddq, prev_ddq - max_delta_ddq, prev_ddq + max_delta_ddq);
+    }
+    if (ddq_limit > ARM_REAL_ZERO) {
+      next_ddq = arm_clamp(next_ddq, -ddq_limit, ddq_limit);
+    }
+
+    arm_real_t next_dq = prev_dq + next_ddq * dt;
     if (dq_limit > ARM_REAL_ZERO) {
       next_dq = arm_clamp(next_dq, -dq_limit, dq_limit);
+      next_ddq = (next_dq - prev_dq) / dt;
     }
 
-    arm_real_t next_q = shaper->q_ref_rad[i] + next_dq * dt;
-    if (dt <= ARM_REAL_ZERO || arm_abs(next_q - shaper->q_ref_rad[i]) >= arm_abs(err)) {
+    arm_real_t next_q = shaper->q_ref_rad[i] + prev_dq * dt + ARM_REAL(0.5) * next_ddq * dt * dt;
+    const arm_real_t step = next_q - shaper->q_ref_rad[i];
+    if (err_abs <= q_tol || (err * step > ARM_REAL_ZERO && arm_abs(step) >= err_abs)) {
       next_q = shaper->q_goal_rad[i];
       next_dq = ARM_REAL_ZERO;
+      next_ddq = ARM_REAL_ZERO;
     }
     next_q = arm_clamp(next_q, q_min, q_max);
-
-    arm_real_t next_ddq = ARM_REAL_ZERO;
-    if (dt > ARM_REAL_ZERO) {
-      next_ddq = (next_dq - prev_dq) / dt;
-      if (ddq_limit > ARM_REAL_ZERO) {
-        next_ddq = arm_clamp(next_ddq, -ddq_limit, ddq_limit);
-      }
-    }
 
     shaper->q_ref_rad[i] = next_q;
     shaper->dq_ref_rad_s[i] = next_dq;

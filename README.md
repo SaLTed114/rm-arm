@@ -89,8 +89,8 @@ Control logs use a source-agnostic joint-space CSV schema. The analyzer needs
 `time_s`, `q_refN`, `dq_refN`, `tau_cmdN`, and filtered state columns
 `q_filtN/dq_filtN`; it also accepts `qN/dqN` aliases for simpler real-arm logs.
 Optional columns such as `q_measN`, `dq_measN`, `tau_ff_gravityN`, `tau_fbN`,
-`mj_ctrlN`, `state_flags`, and `command_flags` enrich the report but are not
-required.
+`mj_ctrlN`, contact diagnostics, `state_flags`, and `command_flags` enrich the
+report but are not required.
 
 Run a benchmark:
 
@@ -101,6 +101,25 @@ Run a benchmark:
 Benchmark feedforward modes can be selected with `--ff=none`, `--ff=gravity`,
 or `--ff=inverse`. `inverse` uses MuJoCo online inverse dynamics and is a
 simulation oracle only.
+
+To watch the exact benchmark case instead of running it headless, pass
+`--gui=on`:
+
+```powershell
+.\build\sim_mujoco\armsim_control_benchmark.exe straight_arm_lift_harsh logs/straight_arm_lift_gui.csv --ff=gravity --harsh=on --contacts=off --gui=on
+```
+
+Benchmark diagnostics can also split the same motion across impaired and ideal
+simulation conditions:
+
+```powershell
+python tools/run_control_benchmarks.py --scenario straight_arm_lift_harsh --ff gravity --ff inverse --harsh on --harsh off --contacts on --contacts off
+```
+
+`--harsh=off` disables the sensor/actuator impairment model. `--contacts=off`
+disables MuJoCo contacts. Comparing those cases separates controller/feedforward
+issues from actuator lag, torque saturation, and contact or placeholder-model
+collision artifacts.
 
 Analyze a log:
 

@@ -126,6 +126,12 @@ def series(rows: list[dict[str, str]], column: str) -> list[float]:
     return [to_float(row, column) for row in rows]
 
 
+def optional_scalar_series(fields: list[str], rows: list[dict[str, str]], column: str) -> list[float] | None:
+    if column not in fields:
+        return None
+    return series(rows, column)
+
+
 def rms(values: list[float]) -> float:
     if not values:
         return 0.0
@@ -151,6 +157,25 @@ def slew(values: list[float], times: list[float]) -> list[float]:
         if dt > 0.0:
             out.append((next_v - prev_v) / dt)
     return out
+
+
+def longest_true_duration(times: list[float], flags: list[bool]) -> float:
+    if not times or not flags:
+        return 0.0
+    longest = 0.0
+    start: float | None = None
+    last_true = times[0]
+    for time_s, active in zip(times, flags):
+        if active:
+            if start is None:
+                start = time_s
+            last_true = time_s
+        elif start is not None:
+            longest = max(longest, last_true - start)
+            start = None
+    if start is not None:
+        longest = max(longest, last_true - start)
+    return longest
 
 
 def settling_time(
@@ -195,6 +220,11 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     times = series(rows, "time_s")
     config = load_config(args.config)
     torque_limits = torque_limits_from_config(config)
+    contact_count = optional_scalar_series(fields, rows, "contact_count")
+    arm_contact_count = optional_scalar_series(fields, rows, "arm_contact_count")
+    constraint_count = optional_scalar_series(fields, rows, "constraint_count")
+    constraint_force_abs = optional_scalar_series(fields, rows, "constraint_force_abs")
+    arm_contact_force_abs = optional_scalar_series(fields, rows, "arm_contact_force_abs")
 
     steady_start = max(0, int(len(rows) * (1.0 - max(0.0, min(1.0, args.steady_window)))))
     joints: list[dict[str, Any]] = []
@@ -213,8 +243,12 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
         limit = torque_limits[joint - 1] if joint - 1 < len(torque_limits) else None
         if limit and limit > 0.0:
             saturation_ratio = sum(1 for value in tau_cmd if abs(value) >= 0.98 * limit) / len(tau_cmd)
+            torque_margin = [limit - abs(value) for value in tau_cmd]
+            saturation_flags = [abs(value) >= 0.98 * limit for value in tau_cmd]
         else:
             saturation_ratio = None
+            torque_margin = []
+            saturation_flags = []
 
         mj_ctrl = optional_series(columns, "mj_ctrl", joint, rows)
         tau_fb = optional_series(columns, "tau_fb", joint, rows)
@@ -243,10 +277,16 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
             "tau_slew_rms": rms(tau_slew),
             "saturation_ratio": saturation_ratio,
         }
+        if torque_margin:
+            metrics["torque_margin_min_nm"] = min(torque_margin)
+            metrics["torque_margin_rms_nm"] = rms(torque_margin)
+            metrics["saturation_longest_s"] = longest_true_duration(times, saturation_flags)
         if mj_ctrl is not None:
             lag = [cmd - ctrl for cmd, ctrl in zip(tau_cmd, mj_ctrl)]
             metrics["actuator_lag_rms"] = rms(lag)
             metrics["actuator_lag_max_abs"] = max_abs(lag)
+            if limit and limit > 0.0:
+                metrics["actuator_lag_max_ratio"] = max_abs(lag) / limit
         if tau_fb is not None:
             metrics["tau_fb_rms"] = rms(tau_fb)
             metrics["steady_tau_fb_rms"] = rms(tau_fb[steady_start:])
@@ -297,6 +337,41 @@ def analyze(args: argparse.Namespace) -> dict[str, Any]:
     if saturation_values:
         summary["saturation_ratio_max"] = max(value for _, value in saturation_values)
         summary["saturation_worst_joint"] = max(saturation_values, key=lambda item: item[1])[0]
+        summary["saturation_longest_s_max"] = max(item.get("saturation_longest_s", 0.0) for item in joints)
+    margin_values = [
+        (item["joint"], item["torque_margin_min_nm"])
+        for item in joints
+        if "torque_margin_min_nm" in item
+    ]
+    if margin_values:
+        summary["torque_margin_min_nm"] = min(value for _, value in margin_values)
+        summary["torque_margin_worst_joint"] = min(margin_values, key=lambda item: item[1])[0]
+    lag_values = [
+        (item["joint"], item["actuator_lag_max_abs"])
+        for item in joints
+        if "actuator_lag_max_abs" in item
+    ]
+    if lag_values:
+        summary["actuator_lag_max_abs"] = max(value for _, value in lag_values)
+        summary["actuator_lag_worst_joint"] = max(lag_values, key=lambda item: item[1])[0]
+    if contact_count is not None:
+        contact_flags = [value > 0.0 for value in contact_count]
+        summary["contact_ratio"] = sum(1 for active in contact_flags if active) / len(contact_flags)
+        summary["contact_count_max"] = max(contact_count)
+        summary["contact_longest_s"] = longest_true_duration(times, contact_flags)
+    if arm_contact_count is not None:
+        arm_contact_flags = [value > 0.0 for value in arm_contact_count]
+        summary["arm_contact_ratio"] = sum(1 for active in arm_contact_flags if active) / len(arm_contact_flags)
+        summary["arm_contact_count_max"] = max(arm_contact_count)
+        summary["arm_contact_longest_s"] = longest_true_duration(times, arm_contact_flags)
+    if constraint_count is not None:
+        summary["constraint_count_max"] = max(constraint_count)
+    if constraint_force_abs is not None:
+        summary["constraint_force_abs_max"] = max_abs(constraint_force_abs)
+        summary["constraint_force_abs_rms"] = rms(constraint_force_abs)
+    if arm_contact_force_abs is not None:
+        summary["arm_contact_force_abs_max"] = max_abs(arm_contact_force_abs)
+        summary["arm_contact_force_abs_rms"] = rms(arm_contact_force_abs)
 
     return {"summary": summary, "joints": joints}
 
@@ -321,8 +396,40 @@ def print_summary(result: dict[str, Any]) -> None:
     )
     if "saturation_ratio_max" in summary:
         print(
-            "saturation: max_ratio={:.3f} worst_joint=J{}".format(
-                summary["saturation_ratio_max"], summary["saturation_worst_joint"]
+            "saturation: max_ratio={:.3f} longest={:.3f}s worst_joint=J{}".format(
+                summary["saturation_ratio_max"],
+                summary.get("saturation_longest_s_max", 0.0),
+                summary["saturation_worst_joint"],
+            )
+        )
+    if "torque_margin_min_nm" in summary:
+        print(
+            "torque margin: min={:.3f} Nm worst_joint=J{}".format(
+                summary["torque_margin_min_nm"], summary["torque_margin_worst_joint"]
+            )
+        )
+    if "actuator_lag_max_abs" in summary:
+        print(
+            "actuator lag: max={:.3f} Nm worst_joint=J{}".format(
+                summary["actuator_lag_max_abs"], summary["actuator_lag_worst_joint"]
+            )
+        )
+    if "contact_ratio" in summary:
+        print(
+            "contacts: ratio={:.3f} longest={:.3f}s max_count={:.0f} constraint_force_max={:.3f}".format(
+                summary["contact_ratio"],
+                summary["contact_longest_s"],
+                summary["contact_count_max"],
+                summary.get("constraint_force_abs_max", 0.0),
+            )
+        )
+    if "arm_contact_ratio" in summary:
+        print(
+            "arm contacts: ratio={:.3f} longest={:.3f}s max_count={:.0f} force_max={:.3f}".format(
+                summary["arm_contact_ratio"],
+                summary["arm_contact_longest_s"],
+                summary["arm_contact_count_max"],
+                summary.get("arm_contact_force_abs_max", 0.0),
             )
         )
     cc = summary["cross_coupling"]

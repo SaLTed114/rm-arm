@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "arm_common/arm_math.h"
+
 #if defined(_WIN32)
 #include <direct.h>
 #define ARMSIM_MKDIR(path) _mkdir(path)
@@ -48,6 +50,18 @@ static void write_zero_values(control_log_t *log) {
   }
 }
 
+static bool contact_is_base_floor_pair(const mjModel *model, const mjContact *contact) {
+  if (!model || !contact) return false;
+
+  const char *name1 = mj_id2name(model, mjOBJ_GEOM, contact->geom1);
+  const char *name2 = mj_id2name(model, mjOBJ_GEOM, contact->geom2);
+  if (!name1 || !name2) return false;
+
+  const bool first_base_floor = strcmp(name1, "base_plate") == 0 && strcmp(name2, "floor") == 0;
+  const bool second_base_floor = strcmp(name1, "floor") == 0 && strcmp(name2, "base_plate") == 0;
+  return first_base_floor || second_base_floor;
+}
+
 bool control_log_open(control_log_t *log, const char *path, uint8_t dof) {
   if (!log || !path || dof == 0u || dof > ARM_DOF_MAX) return false;
 
@@ -71,6 +85,7 @@ bool control_log_write_header(control_log_t *log) {
   if (!log || !log->file) return false;
 
   (void)fprintf(log->file, "time_s,gravity_on,gravity_ff_on,inverse_dyn_ff_on,contacts_on,harsh_on");
+  (void)fprintf(log->file, ",contact_count,arm_contact_count,constraint_count,constraint_force_abs,arm_contact_force_abs");
   write_columns(log, "q_meas");
   write_columns(log, "dq_meas");
   write_columns(log, "q_filt");
@@ -89,6 +104,7 @@ bool control_log_write_header(control_log_t *log) {
 
 bool control_log_write_step(
     control_log_t *log,
+    const mjModel *model,
     const mjData *data,
     const mujoco_arm_t *arm,
     const control_log_flags_t *flags,
@@ -98,7 +114,7 @@ bool control_log_write_step(
     const arm_real_t tau_ff_gravity[ARM_DOF_MAX],
     const arm_real_t tau_ff_model[ARM_DOF_MAX],
     const arm_command_t *command) {
-  if (!log || !log->file || !data || !arm || !filtered_state || !ref || !command) return false;
+  if (!log || !log->file || !model || !data || !arm || !filtered_state || !ref || !command) return false;
 
   const control_log_flags_t zero_flags = {0};
   const control_log_flags_t *f = flags ? flags : &zero_flags;
@@ -111,6 +127,30 @@ bool control_log_write_step(
       f->inverse_dyn_ff_on ? 1u : 0u,
       f->contacts_on ? 1u : 0u,
       f->harsh_on ? 1u : 0u);
+  arm_real_t constraint_force_abs = ARM_REAL_ZERO;
+  for (int i = 0; i < data->nefc; ++i) {
+    constraint_force_abs += arm_abs(ARM_REAL(data->efc_force[i]));
+  }
+  int arm_contact_count = 0;
+  arm_real_t arm_contact_force_abs = ARM_REAL_ZERO;
+  for (int i = 0; i < data->ncon; ++i) {
+    if (contact_is_base_floor_pair(model, &data->contact[i])) continue;
+
+    ++arm_contact_count;
+    mjtNum contact_force[6] = {0};
+    mj_contactForce(model, data, i, contact_force);
+    for (uint8_t axis = 0u; axis < 6u; ++axis) {
+      arm_contact_force_abs += arm_abs(ARM_REAL(contact_force[axis]));
+    }
+  }
+  (void)fprintf(
+      log->file,
+      ",%d,%d,%d,%.9f,%.9f",
+      data->ncon,
+      arm_contact_count,
+      data->nefc,
+      (double)constraint_force_abs,
+      (double)arm_contact_force_abs);
 
   if (measured_state) {
     write_values(log, measured_state->q_rad);
