@@ -1,0 +1,11 @@
+name: armsim
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pyyaml
+  - numpy
+  - tqdm
+  - pip
+  - pip:
+      - mujoco

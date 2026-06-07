@@ -14,6 +14,7 @@ from typing import Any
 DEFAULT_SCENARIOS = (
     "hold_zero_harsh",
     "step_j2_harsh",
+    "step_j3_harsh",
     "coupled_j2j3_harsh",
     "step_j5_harsh",
     "sine_j2_harsh",
@@ -43,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--harsh", action="append", choices=("on", "off"), help="Harsh impairment mode to run")
     parser.add_argument("--contacts", action="append", choices=("on", "off"), help="Contact solver mode to run")
     parser.add_argument("--gui", action="store_true", help="Open the benchmark MuJoCo GUI while running")
+    parser.add_argument("--param-overrides", type=Path, default=None, help="Runtime benchmark parameter override file")
     parser.add_argument("--skip-run", action="store_true", help="Analyze existing CSV logs without rerunning sim")
     parser.add_argument("--verbose", action="store_true", help="Print full analyzer output")
     return parser.parse_args()
@@ -73,6 +75,7 @@ def run_scenario(
     harsh_mode: str,
     contacts_mode: str,
     gui: bool,
+    param_overrides: Path | None,
     csv_path: Path,
     skip_run: bool,
 ) -> None:
@@ -80,18 +83,18 @@ def run_scenario(
         if not csv_path.exists():
             raise RuntimeError(f"{csv_path} does not exist; remove --skip-run or generate it first")
         return
-    run_command(
-        [
-            str(exe),
-            scenario,
-            str(csv_path),
-            f"--ff={ff_mode}",
-            f"--harsh={harsh_mode}",
-            f"--contacts={contacts_mode}",
-            f"--gui={'on' if gui else 'off'}",
-        ],
-        root,
-    )
+    command = [
+        str(exe),
+        scenario,
+        str(csv_path),
+        f"--ff={ff_mode}",
+        f"--harsh={harsh_mode}",
+        f"--contacts={contacts_mode}",
+        f"--gui={'on' if gui else 'off'}",
+    ]
+    if param_overrides is not None:
+        command.append(f"--param-overrides={param_overrides}")
+    run_command(command, root)
 
 
 def analyze_scenario(
@@ -193,6 +196,9 @@ def main() -> int:
     build_dir = args.build_dir if args.build_dir.is_absolute() else root / args.build_dir
     config_path = args.config if args.config.is_absolute() else root / args.config
     out_dir = args.out_dir if args.out_dir.is_absolute() else root / args.out_dir
+    param_overrides = args.param_overrides
+    if param_overrides is not None and not param_overrides.is_absolute():
+        param_overrides = root / param_overrides
     scenarios = tuple(args.scenario) if args.scenario else DEFAULT_SCENARIOS
     ff_modes = tuple(args.ff) if args.ff else DEFAULT_FF_MODES
     harsh_modes = tuple(args.harsh) if args.harsh else DEFAULT_HARSH_MODES
@@ -220,6 +226,7 @@ def main() -> int:
                             harsh_mode,
                             contacts_mode,
                             args.gui,
+                            param_overrides,
                             csv_path,
                             args.skip_run,
                         )

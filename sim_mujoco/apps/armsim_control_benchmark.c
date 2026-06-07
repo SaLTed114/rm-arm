@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 
 #if defined(ARMSIM_BENCHMARK_WITH_GUI)
 #include <GLFW/glfw3.h>
@@ -32,19 +33,20 @@
 typedef enum {
   SCENARIO_HOLD_ZERO_HARSH = 0,
   SCENARIO_STEP_J2_HARSH = 1,
-  SCENARIO_COUPLED_J2J3_HARSH = 2,
-  SCENARIO_STEP_J5_HARSH = 3,
-  SCENARIO_SINE_J2_HARSH = 4,
-  SCENARIO_STRAIGHT_ARM_LIFT_HARSH = 5,
-  SCENARIO_NEAR_LIMIT_J2_HARSH = 6,
-  SCENARIO_FLOOR_BLOCKED_HARSH = 7,
-  SCENARIO_TOOL_CIRCLE_XY_HARSH = 8,
-  SCENARIO_TOOL_CIRCLE_XZ_HARSH = 9,
-  SCENARIO_TOOL_CIRCLE_YZ_HARSH = 10,
-  SCENARIO_TOOL_SQUARE_XY_HARSH = 11,
-  SCENARIO_TOOL_SQUARE_XZ_HARSH = 12,
-  SCENARIO_TOOL_SQUARE_YZ_HARSH = 13,
-  SCENARIO_TOOL_INSERT_LINE_HARSH = 14,
+  SCENARIO_STEP_J3_HARSH = 2,
+  SCENARIO_COUPLED_J2J3_HARSH = 3,
+  SCENARIO_STEP_J5_HARSH = 4,
+  SCENARIO_SINE_J2_HARSH = 5,
+  SCENARIO_STRAIGHT_ARM_LIFT_HARSH = 6,
+  SCENARIO_NEAR_LIMIT_J2_HARSH = 7,
+  SCENARIO_FLOOR_BLOCKED_HARSH = 8,
+  SCENARIO_TOOL_CIRCLE_XY_HARSH = 9,
+  SCENARIO_TOOL_CIRCLE_XZ_HARSH = 10,
+  SCENARIO_TOOL_CIRCLE_YZ_HARSH = 11,
+  SCENARIO_TOOL_SQUARE_XY_HARSH = 12,
+  SCENARIO_TOOL_SQUARE_XZ_HARSH = 13,
+  SCENARIO_TOOL_SQUARE_YZ_HARSH = 14,
+  SCENARIO_TOOL_INSERT_LINE_HARSH = 15,
 } benchmark_scenario_t;
 
 typedef enum {
@@ -75,12 +77,15 @@ typedef struct {
   arm_real_t initial_q_rad[ARM_DOF_MAX];
   arm_real_t initial_tool_pos[3];
   arm_real_t tool_target_pos[3];
+  arm_real_t tool_ik_seed_q_rad[ARM_DOF_MAX];
   bool tool_target_valid;
+  bool tool_ik_seed_valid;
   benchmark_ff_mode_t ff_mode;
   armsim_impairment_t impairment;
   control_log_t log;
   bool harsh_enabled;
   bool contacts_enabled;
+  const char *param_override_path;
 } benchmark_app_t;
 
 typedef struct {
@@ -109,6 +114,8 @@ static const char *scenario_name(benchmark_scenario_t scenario) {
       return "hold_zero_harsh";
     case SCENARIO_STEP_J2_HARSH:
       return "step_j2_harsh";
+    case SCENARIO_STEP_J3_HARSH:
+      return "step_j3_harsh";
     case SCENARIO_COUPLED_J2J3_HARSH:
       return "coupled_j2j3_harsh";
     case SCENARIO_STEP_J5_HARSH:
@@ -148,6 +155,10 @@ static int parse_scenario(const char *name, benchmark_scenario_t *scenario) {
   }
   if (strcmp(name, "step_j2_harsh") == 0) {
     *scenario = SCENARIO_STEP_J2_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "step_j3_harsh") == 0) {
+    *scenario = SCENARIO_STEP_J3_HARSH;
     return ARM_OK;
   }
   if (strcmp(name, "coupled_j2j3_harsh") == 0) {
@@ -216,6 +227,154 @@ static int parse_on_off(const char *name, bool *enabled) {
     return ARM_OK;
   }
   return ARM_ERR_CONFIG;
+}
+
+static char *trim_ascii(char *text) {
+  if (!text) return NULL;
+  while (*text && isspace((unsigned char)*text)) {
+    ++text;
+  }
+  char *end = text + strlen(text);
+  while (end > text && isspace((unsigned char)end[-1])) {
+    --end;
+  }
+  *end = '\0';
+  return text;
+}
+
+static int parse_joint_key(const char *key, const char *prefix, uint8_t dof, uint8_t *joint, const char **field) {
+  if (!key || !prefix || !joint || !field) return ARM_ERR_NULL;
+  const size_t prefix_len = strlen(prefix);
+  if (strncmp(key, prefix, prefix_len) != 0) return ARM_ERR_CONFIG;
+  const char *cursor = key + prefix_len;
+  char *end = NULL;
+  const long joint_one_based = strtol(cursor, &end, 10);
+  if (end == cursor || !end || *end != '.') return ARM_ERR_CONFIG;
+  if (joint_one_based <= 0 || joint_one_based > dof) return ARM_ERR_CONFIG;
+  *joint = (uint8_t)(joint_one_based - 1);
+  *field = end + 1;
+  return ARM_OK;
+}
+
+static bool parse_real_value(const char *text, arm_real_t *value) {
+  if (!text || !value) return false;
+  char *end = NULL;
+  const double parsed = strtod(text, &end);
+  if (end == text) return false;
+  while (end && *end) {
+    if (!isspace((unsigned char)*end)) return false;
+    ++end;
+  }
+  *value = ARM_REAL(parsed);
+  return true;
+}
+
+static int apply_param_override_line(benchmark_app_t *app, const char *key, arm_real_t value) {
+  uint8_t joint = 0u;
+  const char *field = NULL;
+
+  if (parse_joint_key(key, "pd.", app->core.config.dof, &joint, &field) == ARM_OK) {
+    joint_pd_params_t params = app->pd.params[joint];
+    if (strcmp(field, "kp") == 0) {
+      params.kp = value;
+    } else if (strcmp(field, "kd") == 0) {
+      params.kd = value;
+    } else if (strcmp(field, "out_limit") == 0) {
+      params.out_limit = value;
+    } else {
+      return ARM_ERR_CONFIG;
+    }
+    joint_pd_set_params(&app->pd, joint, params);
+    return ARM_OK;
+  }
+
+  if (parse_joint_key(key, "state_filter.", app->core.config.dof, &joint, &field) == ARM_OK) {
+    joint_state_filter_params_t params = app->state_filter.params[joint];
+    if (strcmp(field, "q_time_constant_s") == 0) {
+      params.q_time_constant_s = value;
+    } else if (strcmp(field, "dq_time_constant_s") == 0) {
+      params.dq_time_constant_s = value;
+    } else {
+      return ARM_ERR_CONFIG;
+    }
+    joint_state_filter_set_params(&app->state_filter, joint, params);
+    return ARM_OK;
+  }
+
+  if (parse_joint_key(key, "shaper.", app->core.config.dof, &joint, &field) == ARM_OK) {
+    if (strcmp(field, "dq_limit_rad_s") == 0) {
+      app->shaper.params.dq_limit_rad_s[joint] = value;
+      app->safety.joints[joint].dq_limit_rad_s = value * ARMSIM_ARM6_SAFETY_DQ_LIMIT_SCALE;
+    } else if (strcmp(field, "ddq_limit_rad_s2") == 0) {
+      app->shaper.params.ddq_limit_rad_s2[joint] = value;
+    } else if (strcmp(field, "dddq_limit_rad_s3") == 0) {
+      app->shaper.params.dddq_limit_rad_s3[joint] = value;
+    } else {
+      return ARM_ERR_CONFIG;
+    }
+    return ARM_OK;
+  }
+
+  if (parse_joint_key(key, "output_limiter.", app->core.config.dof, &joint, &field) == ARM_OK) {
+    arm_output_limiter_joint_params_t params = app->output_limiter.joints[joint];
+    if (strcmp(field, "tau_rate_limit_nm_s") != 0) return ARM_ERR_CONFIG;
+    params.tau_rate_limit_nm_s = value;
+    arm_output_limiter_set_joint_params(&app->output_limiter, joint, params);
+    return ARM_OK;
+  }
+
+  if (strcmp(key, "output_limiter.tau_rate_limit_nm_s") == 0) {
+    for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+      arm_output_limiter_set_joint_params(
+          &app->output_limiter,
+          i,
+          (arm_output_limiter_joint_params_t){value});
+    }
+    return ARM_OK;
+  }
+
+  return ARM_ERR_CONFIG;
+}
+
+static int apply_param_overrides(benchmark_app_t *app, const char *path) {
+  if (!path || !path[0]) return ARM_OK;
+  FILE *file = fopen(path, "r");
+  if (!file) {
+    fprintf(stderr, "Failed to open parameter override file '%s'.\n", path);
+    return ARM_ERR_CONFIG;
+  }
+
+  char line[256];
+  int line_no = 0;
+  while (fgets(line, sizeof(line), file)) {
+    ++line_no;
+    char *text = trim_ascii(line);
+    if (!text || !text[0] || text[0] == '#') continue;
+
+    char *equals = strchr(text, '=');
+    if (!equals) {
+      fprintf(stderr, "Invalid override %s:%d: expected key=value.\n", path, line_no);
+      fclose(file);
+      return ARM_ERR_CONFIG;
+    }
+    *equals = '\0';
+    char *key = trim_ascii(text);
+    char *value_text = trim_ascii(equals + 1);
+    arm_real_t value = ARM_REAL_ZERO;
+    if (!parse_real_value(value_text, &value)) {
+      fprintf(stderr, "Invalid override %s:%d: bad numeric value '%s'.\n", path, line_no, value_text);
+      fclose(file);
+      return ARM_ERR_CONFIG;
+    }
+    if (apply_param_override_line(app, key, value) != ARM_OK) {
+      fprintf(stderr, "Invalid override %s:%d: unknown key '%s'.\n", path, line_no, key);
+      fclose(file);
+      return ARM_ERR_CONFIG;
+    }
+  }
+
+  fclose(file);
+  return ARM_OK;
 }
 
 static bool scenario_uses_tool_path(benchmark_scenario_t scenario) {
@@ -622,6 +781,13 @@ static void square_plane_target(
   }
 }
 
+static void reset_tool_ik_seed(benchmark_app_t *app) {
+  app->tool_ik_seed_valid = false;
+  for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
+    app->tool_ik_seed_q_rad[i] = ARM_REAL_ZERO;
+  }
+}
+
 static int solve_tool_target(benchmark_app_t *app, const arm_real_t target[3]) {
   joint_ik_position_options_t options = {
       24u,
@@ -631,11 +797,21 @@ static int solve_tool_target(benchmark_app_t *app, const arm_real_t target[3]) {
       app->initial_q_rad,
       ARM_REAL(0.015),
   };
-  const int status =
-      joint_ik_position_solve(&app->kinematics, &app->core.state, target, &options, &app->manual_goal_ref);
+  arm_state_t seed_state = app->core.state;
+  if (app->tool_ik_seed_valid) {
+    for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+      seed_state.q_rad[i] = app->tool_ik_seed_q_rad[i];
+      seed_state.dq_rad_s[i] = ARM_REAL_ZERO;
+    }
+  }
+  const int status = joint_ik_position_solve(&app->kinematics, &seed_state, target, &options, &app->manual_goal_ref);
   if (status == ARM_OK) {
     arm_vec3_copy(target, app->tool_target_pos);
     app->tool_target_valid = true;
+    for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+      app->tool_ik_seed_q_rad[i] = app->manual_goal_ref.q_ref_rad[i];
+    }
+    app->tool_ik_seed_valid = true;
   }
   return status;
 }
@@ -691,6 +867,8 @@ static int update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scena
 
   if (scenario == SCENARIO_STEP_J2_HARSH && time_s >= ARM_REAL(1.0)) {
     app->manual_goal_ref.q_ref_rad[1] = ARM_REAL(-0.45);
+  } else if (scenario == SCENARIO_STEP_J3_HARSH && time_s >= ARM_REAL(1.0)) {
+    app->manual_goal_ref.q_ref_rad[2] = ARM_REAL(-0.45);
   } else if (scenario == SCENARIO_COUPLED_J2J3_HARSH && time_s >= ARM_REAL(1.0)) {
     app->manual_goal_ref.q_ref_rad[1] = ARM_REAL(-0.55);
     app->manual_goal_ref.q_ref_rad[2] = ARM_REAL(0.42);
@@ -722,6 +900,7 @@ static int update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scena
     }
   }
   app->tool_target_valid = false;
+  reset_tool_ik_seed(app);
   return ARM_OK;
 }
 
@@ -798,6 +977,8 @@ static int load_app(benchmark_app_t *app, const char *model_path, benchmark_scen
   configure_ref_shaper_and_safety(app);
   configure_state_filter(app, &app->core.state);
   configure_output_limiter(app);
+  status = apply_param_overrides(app, app->param_override_path);
+  if (status != ARM_OK) return status;
   configure_gravity_ff(app);
   status = configure_inverse_dynamics_ff(app);
   if (status != ARM_OK) return status;
@@ -829,6 +1010,7 @@ int main(int argc, char **argv) {
   bool harsh_enabled = true;
   bool contacts_enabled = true;
   bool gui_enabled = false;
+  const char *param_override_path = NULL;
   if (argc > 1 && parse_scenario(argv[1], &scenario) != ARM_OK) {
     fprintf(stderr, "Unknown scenario '%s'.\n", argv[1]);
     return EXIT_FAILURE;
@@ -857,6 +1039,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Unknown GUI mode '%s'.\n", argv[i] + 6);
         return EXIT_FAILURE;
       }
+    } else if (strncmp(argv[i], "--param-overrides=", 18) == 0) {
+      param_override_path = argv[i] + 18;
     } else if (!log_path_arg) {
       log_path_arg = argv[i];
     } else if (!model_path_arg) {
@@ -883,6 +1067,7 @@ int main(int argc, char **argv) {
   benchmark_app_t app = {0};
   app.harsh_enabled = harsh_enabled;
   app.contacts_enabled = contacts_enabled;
+  app.param_override_path = param_override_path;
   int status = load_app(&app, model_path, scenario);
   if (status != ARM_OK) {
     destroy_app(&app);

@@ -2,6 +2,18 @@
 
 Run commands from the repository root.
 
+## Tool Environment
+
+Create the optional Python tooling environment:
+
+```powershell
+conda env create -f environment.yml
+conda activate armsim
+```
+
+This environment is for codegen, analysis, tuning, and future offline modeling
+tools. The C/CMake build still uses the checked-in generated files directly.
+
 ## Generate
 
 ```powershell
@@ -33,7 +45,7 @@ python tools\run_control_benchmarks.py
 Run focused joint-space control cases:
 
 ```powershell
-python tools\run_control_benchmarks.py --scenario step_j2_harsh --scenario coupled_j2j3_harsh --scenario sine_j2_harsh --scenario straight_arm_lift_harsh --ff gravity --harsh on --contacts on
+python tools\run_control_benchmarks.py --scenario step_j2_harsh --scenario step_j3_harsh --scenario coupled_j2j3_harsh --scenario sine_j2_harsh --scenario straight_arm_lift_harsh --ff gravity --harsh on --contacts on
 ```
 
 Run task-space tool path cases:
@@ -79,4 +91,45 @@ Analyze existing benchmark CSV files without rerunning simulation:
 
 ```powershell
 python tools\run_control_benchmarks.py --skip-run --scenario tool_circle_xz_harsh --scenario tool_square_xz_harsh --scenario tool_insert_line_harsh --ff gravity --harsh on --contacts on
+```
+
+## Tune Parameters
+
+Run the first-pass automatic tuner. It writes candidate configs and summaries
+under `logs\tuning_runs\<timestamp>\`, but does not overwrite the canonical YAML
+with the best result. With `tqdm` installed, candidate and scenario progress bars
+are shown automatically. The tuner uses runtime parameter overrides, so it does
+not regenerate files or rebuild the C executable; run `cmake --build build`
+manually first if the benchmark binary is stale. Candidate 0 is the current
+YAML baseline, candidate 1 is a model-derived seed, and later candidates are
+internal CMA-style high-level scale samples around that seed. The tuner does
+not depend on the external `cma` Python package.
+
+```powershell
+python tools\tune_control_params.py --budget 30 --seed 1
+```
+
+Smoke-test the tuner with a tiny budget and two quick scenarios:
+
+```powershell
+python tools\tune_control_params.py --budget 3 --seed 1 --scenario hold_zero_harsh --scenario step_j2_harsh
+```
+
+Force the random fallback instead of CMA-style evolution search:
+
+```powershell
+python tools\tune_control_params.py --budget 10 --seed 1 --optimizer random
+```
+
+Run one benchmark with a tuned override file:
+
+```powershell
+python tools\run_control_benchmarks.py --scenario step_j2_harsh --param-overrides logs\tuning_runs\<timestamp>\best.params --ff gravity --harsh on --contacts on
+```
+
+Inspect the model-derived seed and diagnostics from a tuning run:
+
+```powershell
+Get-Content logs\tuning_runs\<timestamp>\seed_diagnostics.json
+Get-Content logs\tuning_runs\<timestamp>\summary.md
 ```
