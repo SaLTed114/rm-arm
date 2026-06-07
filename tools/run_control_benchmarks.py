@@ -31,6 +31,7 @@ DEFAULT_SCENARIOS = (
     "joint_circle_j2j3_harsh",
     "joint_square_j2j3_harsh",
     "joint_insert_line_harsh",
+    "teleop_wave_j2j3j5_harsh",
 )
 DEFAULT_FF_MODES = ("gravity",)
 DEFAULT_HARSH_MODES = ("on",)

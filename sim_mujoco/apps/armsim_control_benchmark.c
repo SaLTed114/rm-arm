@@ -19,6 +19,7 @@
 #include "arm_core/joint_state_filter.h"
 #include "arm_motion/joint_kinematics.h"
 #include "arm_motion/joint_ref_shaper.h"
+#include "arm_motion/joint_trajectory.h"
 #include "armsim/arm6_sim_config.h"
 #include "armsim/control_log.h"
 #include "armsim/default_arm_config.h"
@@ -29,7 +30,6 @@
 
 #define BENCHMARK_TRAIL_MAX 360
 #define BENCHMARK_TRAIL_DT_S 0.02
-#define BENCHMARK_JOINT_TRAJ_MAX 96
 
 typedef enum {
   SCENARIO_HOLD_ZERO_HARSH = 0,
@@ -51,6 +51,7 @@ typedef enum {
   SCENARIO_JOINT_CIRCLE_J2J3_HARSH = 16,
   SCENARIO_JOINT_SQUARE_J2J3_HARSH = 17,
   SCENARIO_JOINT_INSERT_LINE_HARSH = 18,
+  SCENARIO_TELEOP_WAVE_J2J3J5_HARSH = 19,
 } benchmark_scenario_t;
 
 typedef enum {
@@ -82,10 +83,7 @@ typedef struct {
   arm_real_t initial_tool_pos[3];
   arm_real_t tool_target_pos[3];
   arm_real_t tool_ik_seed_q_rad[ARM_DOF_MAX];
-  arm_real_t joint_traj_waypoints[BENCHMARK_JOINT_TRAJ_MAX][ARM_DOF_MAX];
-  uint8_t joint_traj_count;
-  arm_real_t joint_traj_segment_s;
-  bool joint_traj_loop;
+  joint_trajectory_t joint_traj;
   bool joint_traj_valid;
   bool tool_target_valid;
   bool tool_ik_seed_valid;
@@ -158,6 +156,8 @@ static const char *scenario_name(benchmark_scenario_t scenario) {
       return "joint_square_j2j3_harsh";
     case SCENARIO_JOINT_INSERT_LINE_HARSH:
       return "joint_insert_line_harsh";
+    case SCENARIO_TELEOP_WAVE_J2J3J5_HARSH:
+      return "teleop_wave_j2j3j5_harsh";
     default:
       return "unknown";
   }
@@ -239,6 +239,10 @@ static int parse_scenario(const char *name, benchmark_scenario_t *scenario) {
   }
   if (strcmp(name, "joint_insert_line_harsh") == 0) {
     *scenario = SCENARIO_JOINT_INSERT_LINE_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "teleop_wave_j2j3j5_harsh") == 0) {
+    *scenario = SCENARIO_TELEOP_WAVE_J2J3J5_HARSH;
     return ARM_OK;
   }
   return ARM_ERR_CONFIG;
@@ -448,6 +452,10 @@ static void configure_initial_pose_for_scenario(
     q_rad[1] = ARM_REAL(-0.65);
     q_rad[2] = ARM_REAL(0.85);
     q_rad[4] = ARM_REAL(-0.20);
+  } else if (scenario == SCENARIO_TELEOP_WAVE_J2J3J5_HARSH) {
+    q_rad[1] = ARM_REAL(-0.55);
+    q_rad[2] = ARM_REAL(0.65);
+    q_rad[4] = ARM_REAL(-0.15);
   } else if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) {
     q_rad[1] = ARM_REAL(-0.32);
     q_rad[2] = ARM_REAL(0.58);
@@ -842,6 +850,25 @@ static void square_plane_target(
   }
 }
 
+static void rounded_square_plane_target(
+    const arm_real_t center[3],
+    uint8_t axis_a,
+    uint8_t axis_b,
+    arm_real_t half_size_m,
+    arm_real_t phase,
+    arm_real_t target[3]) {
+  arm_vec3_copy(center, target);
+  const arm_real_t angle = ARM_REAL(2.0) * ARM_REAL_PI * phase;
+  const arm_real_t c = ARM_REAL(cos((double)angle));
+  const arm_real_t s = ARM_REAL(sin((double)angle));
+  const arm_real_t sharpness = ARM_REAL(1.65);
+  const arm_real_t norm = ARM_REAL(tanh((double)sharpness));
+  const arm_real_t x = ARM_REAL(tanh((double)(sharpness * c))) / norm;
+  const arm_real_t y = ARM_REAL(tanh((double)(sharpness * s))) / norm;
+  target[axis_a] += half_size_m * x;
+  target[axis_b] += half_size_m * y;
+}
+
 static void reset_tool_ik_seed(benchmark_app_t *app) {
   app->tool_ik_seed_valid = false;
   for (uint8_t i = 0u; i < ARM_DOF_MAX; ++i) {
@@ -926,14 +953,14 @@ static benchmark_scenario_t joint_trajectory_source_tool_scenario(benchmark_scen
 
 static arm_real_t joint_trajectory_period_s(benchmark_scenario_t scenario) {
   if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) return ARM_REAL(3.2);
-  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return ARM_REAL(3.4);
+  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return ARM_REAL(4.0);
   if (scenario == SCENARIO_JOINT_INSERT_LINE_HARSH) return ARM_REAL(4.2);
   return ARM_REAL_ZERO;
 }
 
 static uint8_t joint_trajectory_sample_count(benchmark_scenario_t scenario) {
   if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) return 64u;
-  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return 72u;
+  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return 96u;
   if (scenario == SCENARIO_JOINT_INSERT_LINE_HARSH) return 85u;
   return 0u;
 }
@@ -987,11 +1014,19 @@ static int build_joint_trajectory_from_ik(benchmark_app_t *app, benchmark_scenar
   if (!app || !scenario_uses_joint_trajectory(scenario)) return ARM_ERR_CONFIG;
   const uint8_t sample_count = joint_trajectory_sample_count(scenario);
   const arm_real_t period_s = joint_trajectory_period_s(scenario);
-  if (sample_count < 2u || sample_count > BENCHMARK_JOINT_TRAJ_MAX || period_s <= ARM_REAL_ZERO) return ARM_ERR_CONFIG;
+  if (sample_count < 2u || sample_count > JOINT_TRAJECTORY_WAYPOINT_MAX || period_s <= ARM_REAL_ZERO) return ARM_ERR_CONFIG;
 
   const benchmark_scenario_t tool_scenario = joint_trajectory_source_tool_scenario(scenario);
   const bool loop = scenario != SCENARIO_JOINT_INSERT_LINE_HARSH;
   const arm_real_t divisor = loop ? ARM_REAL(sample_count) : ARM_REAL((uint8_t)(sample_count - 1u));
+  int status = joint_trajectory_init(
+      &app->joint_traj,
+      app->core.config.dof,
+      sample_count,
+      loop ? (period_s / ARM_REAL(sample_count)) : (period_s / ARM_REAL((uint8_t)(sample_count - 1u))),
+      loop);
+  if (status != ARM_OK) return status;
+
   arm_state_t seed_state = app->core.state;
   joint_ik_position_options_t options = {
       32u,
@@ -1005,153 +1040,48 @@ static int build_joint_trajectory_from_ik(benchmark_app_t *app, benchmark_scenar
   for (uint8_t sample = 0u; sample < sample_count; ++sample) {
     arm_real_t target[3];
     const arm_real_t sample_time_s = period_s * ARM_REAL(sample) / divisor;
-    int status = tool_path_target_at_time(app, tool_scenario, sample_time_s, target);
+    status = tool_path_target_at_time(app, tool_scenario, sample_time_s, target);
+    if (status == ARM_OK && scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) {
+      uint8_t axis_a = 0u;
+      uint8_t axis_b = 2u;
+      const arm_real_t half_size = ARM_REAL(0.075);
+      arm_real_t center[3];
+      arm_vec3_copy(app->initial_tool_pos, center);
+      center[axis_a] -= half_size;
+      center[axis_b] -= half_size;
+      rounded_square_plane_target(center, axis_a, axis_b, half_size, sample_time_s / period_s, target);
+    }
     if (status != ARM_OK) return status;
 
     arm_reference_t solved_ref;
     status = joint_ik_position_solve(&app->kinematics, &seed_state, target, &options, &solved_ref);
     if (status != ARM_OK) return status;
+    arm_real_t waypoint_q[ARM_DOF_MAX] = {0};
     for (uint8_t joint = 0u; joint < app->core.config.dof; ++joint) {
-      const arm_real_t q = solved_ref.q_ref_rad[joint];
-      app->joint_traj_waypoints[sample][joint] = q;
-      seed_state.q_rad[joint] = q;
+      waypoint_q[joint] = solved_ref.q_ref_rad[joint];
+      seed_state.q_rad[joint] = waypoint_q[joint];
       seed_state.dq_rad_s[joint] = ARM_REAL_ZERO;
     }
+    status = joint_trajectory_set_waypoint(&app->joint_traj, sample, waypoint_q);
+    if (status != ARM_OK) return status;
   }
 
-  app->joint_traj_count = sample_count;
-  app->joint_traj_loop = loop;
-  app->joint_traj_segment_s = loop ? (period_s / ARM_REAL(sample_count)) : (period_s / ARM_REAL((uint8_t)(sample_count - 1u)));
   app->joint_traj_valid = true;
-  return ARM_OK;
-}
-
-static void set_direct_ref_from_q_dq_ddq(
-    benchmark_app_t *app,
-    const arm_real_t q[ARM_DOF_MAX],
-    const arm_real_t dq[ARM_DOF_MAX],
-    const arm_real_t ddq[ARM_DOF_MAX]) {
-  arm_reference_zero(&app->active_ref, app->core.config.dof);
-  app->active_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID;
-  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    app->active_ref.q_ref_rad[i] = q[i];
-    app->active_ref.dq_ref_rad_s[i] = dq[i];
-    app->active_ref.ddq_ref_rad_s2[i] = ddq[i];
-    app->manual_goal_ref.q_ref_rad[i] = q[i];
-    app->manual_goal_ref.dq_ref_rad_s[i] = dq[i];
-    app->manual_goal_ref.ddq_ref_rad_s2[i] = ddq[i];
-  }
-  app->manual_goal_ref.flags = app->active_ref.flags;
-  app->use_direct_ref = true;
-  app->tool_target_valid = false;
-  reset_tool_ik_seed(app);
-}
-
-static void set_direct_ref_hold(benchmark_app_t *app, const arm_real_t q[ARM_DOF_MAX]) {
-  arm_real_t dq[ARM_DOF_MAX] = {0};
-  arm_real_t ddq[ARM_DOF_MAX] = {0};
-  set_direct_ref_from_q_dq_ddq(app, q, dq, ddq);
-}
-
-static uint8_t trajectory_prev_index(uint8_t index, uint8_t count, bool loop) {
-  if (index > 0u) return (uint8_t)(index - 1u);
-  return loop ? (uint8_t)(count - 1u) : 0u;
-}
-
-static uint8_t trajectory_next_index(uint8_t index, uint8_t count, bool loop) {
-  const uint8_t next = (uint8_t)(index + 1u);
-  if (next < count) return next;
-  return loop ? 0u : (uint8_t)(count - 1u);
-}
-
-static arm_real_t trajectory_waypoint_velocity(
-    const arm_real_t waypoints[][ARM_DOF_MAX],
-    uint8_t waypoint_count,
-    uint8_t index,
-    uint8_t joint,
-    arm_real_t segment_duration_s,
-    bool loop) {
-  if (!loop && (index == 0u || index + 1u >= waypoint_count)) return ARM_REAL_ZERO;
-  const uint8_t prev = trajectory_prev_index(index, waypoint_count, loop);
-  const uint8_t next = trajectory_next_index(index, waypoint_count, loop);
-  arm_real_t dt = ARM_REAL(2.0) * segment_duration_s;
-  if (!loop && (index == 0u || index + 1u >= waypoint_count)) dt = segment_duration_s;
-  if (dt <= ARM_REAL_ZERO) return ARM_REAL_ZERO;
-  return (waypoints[next][joint] - waypoints[prev][joint]) / dt;
-}
-
-static int update_joint_segment_trajectory(
-    benchmark_app_t *app,
-    const arm_real_t waypoints[][ARM_DOF_MAX],
-    uint8_t waypoint_count,
-    arm_real_t segment_duration_s,
-    arm_real_t time_s,
-    bool loop) {
-  if (!app || !waypoints || waypoint_count < 2u || segment_duration_s <= ARM_REAL_ZERO) return ARM_ERR_CONFIG;
-
-  const arm_real_t start_s = ARM_REAL(0.8);
-  arm_real_t t = time_s - start_s;
-  if (t <= ARM_REAL_ZERO) {
-    set_direct_ref_hold(app, waypoints[0]);
-    return ARM_OK;
-  }
-
-  const uint8_t segment_count = loop ? waypoint_count : (uint8_t)(waypoint_count - 1u);
-  const arm_real_t total_s = segment_duration_s * ARM_REAL(segment_count);
-  if (loop) {
-    while (t >= total_s) {
-      t -= total_s;
-    }
-  } else if (t >= total_s) {
-    set_direct_ref_hold(app, waypoints[waypoint_count - 1u]);
-    return ARM_OK;
-  }
-
-  uint8_t segment = (uint8_t)(t / segment_duration_s);
-  if (segment >= segment_count) segment = (uint8_t)(segment_count - 1u);
-  const uint8_t next = loop ? (uint8_t)((segment + 1u) % waypoint_count) : (uint8_t)(segment + 1u);
-  const arm_real_t local_t = t - segment_duration_s * ARM_REAL(segment);
-  const arm_real_t p = arm_clamp(local_t / segment_duration_s, ARM_REAL_ZERO, ARM_REAL_ONE);
-  const arm_real_t p2 = p * p;
-  const arm_real_t p3 = p2 * p;
-  const arm_real_t h00 = ARM_REAL(2.0) * p3 - ARM_REAL(3.0) * p2 + ARM_REAL_ONE;
-  const arm_real_t h10 = p3 - ARM_REAL(2.0) * p2 + p;
-  const arm_real_t h01 = ARM_REAL(-2.0) * p3 + ARM_REAL(3.0) * p2;
-  const arm_real_t h11 = p3 - p2;
-  const arm_real_t dh00 = (ARM_REAL(6.0) * p2 - ARM_REAL(6.0) * p) / segment_duration_s;
-  const arm_real_t dh10 = ARM_REAL(3.0) * p2 - ARM_REAL(4.0) * p + ARM_REAL_ONE;
-  const arm_real_t dh01 = (ARM_REAL(-6.0) * p2 + ARM_REAL(6.0) * p) / segment_duration_s;
-  const arm_real_t dh11 = ARM_REAL(3.0) * p2 - ARM_REAL(2.0) * p;
-  const arm_real_t ddh00 = (ARM_REAL(12.0) * p - ARM_REAL(6.0)) / (segment_duration_s * segment_duration_s);
-  const arm_real_t ddh10 = (ARM_REAL(6.0) * p - ARM_REAL(4.0)) / segment_duration_s;
-  const arm_real_t ddh01 = (ARM_REAL(-12.0) * p + ARM_REAL(6.0)) / (segment_duration_s * segment_duration_s);
-  const arm_real_t ddh11 = (ARM_REAL(6.0) * p - ARM_REAL(2.0)) / segment_duration_s;
-
-  arm_real_t q[ARM_DOF_MAX] = {0};
-  arm_real_t dq[ARM_DOF_MAX] = {0};
-  arm_real_t ddq[ARM_DOF_MAX] = {0};
-  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
-    const arm_real_t q0 = waypoints[segment][i];
-    const arm_real_t q1 = waypoints[next][i];
-    const arm_real_t v0 = trajectory_waypoint_velocity(waypoints, waypoint_count, segment, i, segment_duration_s, loop);
-    const arm_real_t v1 = trajectory_waypoint_velocity(waypoints, waypoint_count, next, i, segment_duration_s, loop);
-    q[i] = h00 * q0 + h10 * segment_duration_s * v0 + h01 * q1 + h11 * segment_duration_s * v1;
-    dq[i] = dh00 * q0 + dh10 * v0 + dh01 * q1 + dh11 * v1;
-    ddq[i] = ddh00 * q0 + ddh10 * v0 + ddh01 * q1 + ddh11 * v1;
-  }
-  set_direct_ref_from_q_dq_ddq(app, q, dq, ddq);
   return ARM_OK;
 }
 
 static int update_joint_trajectory_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
   if (!app || !scenario_uses_joint_trajectory(scenario) || !app->joint_traj_valid) return ARM_ERR_CONFIG;
-  return update_joint_segment_trajectory(
-      app,
-      app->joint_traj_waypoints,
-      app->joint_traj_count,
-      app->joint_traj_segment_s,
-      time_s,
-      app->joint_traj_loop);
+  const arm_real_t start_s = ARM_REAL(0.8);
+  arm_real_t t = time_s - start_s;
+  if (t < ARM_REAL_ZERO) t = ARM_REAL_ZERO;
+  const int status = joint_trajectory_sample(&app->joint_traj, t, &app->active_ref);
+  if (status != ARM_OK) return status;
+  app->manual_goal_ref = app->active_ref;
+  app->use_direct_ref = true;
+  app->tool_target_valid = false;
+  reset_tool_ik_seed(app);
+  return ARM_OK;
 }
 
 static int update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
@@ -1200,6 +1130,14 @@ static int update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scena
       app->manual_goal_ref.q_ref_rad[1] = ARM_REAL(1.35);
       app->manual_goal_ref.q_ref_rad[2] = ARM_REAL(-1.20);
     }
+  } else if (scenario == SCENARIO_TELEOP_WAVE_J2J3J5_HARSH) {
+    const arm_real_t t = time_s >= ARM_REAL(0.8) ? time_s - ARM_REAL(0.8) : ARM_REAL_ZERO;
+    const arm_real_t w = ARM_REAL(2.0) * ARM_REAL_PI / ARM_REAL(3.8);
+    const arm_real_t ramp = arm_clamp(t / ARM_REAL(0.8), ARM_REAL_ZERO, ARM_REAL_ONE);
+    const arm_real_t phase = w * t;
+    app->manual_goal_ref.q_ref_rad[1] = ARM_REAL(-0.55) + ramp * ARM_REAL(0.20) * ARM_REAL(sin((double)phase));
+    app->manual_goal_ref.q_ref_rad[2] = ARM_REAL(0.65) + ramp * ARM_REAL(0.24) * ARM_REAL(sin((double)(phase + ARM_REAL(1.35))));
+    app->manual_goal_ref.q_ref_rad[4] = ARM_REAL(-0.15) + ramp * ARM_REAL(0.35) * ARM_REAL(sin((double)(phase * ARM_REAL(1.35) - ARM_REAL(0.75))));
   }
   app->tool_target_valid = false;
   reset_tool_ik_seed(app);

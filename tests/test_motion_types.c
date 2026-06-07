@@ -5,6 +5,7 @@
 #include "arm_common/arm_math.h"
 #include "arm_motion/joint_kinematics.h"
 #include "arm_motion/joint_ref_shaper.h"
+#include "arm_motion/joint_trajectory.h"
 
 static int near_zero(arm_real_t value) {
   return fabs((double)value) < 1.0e-9;
@@ -198,6 +199,36 @@ int main(void) {
   assert(arm_abs(shaped_ref.q_ref_rad[0] - 0.5) < 1.0e-6);
   assert(arm_abs(shaped_ref.dq_ref_rad_s[0]) < 1.0e-6);
   assert(arm_abs(shaped_ref.ddq_ref_rad_s2[0]) < 1.0e-6);
+
+  joint_trajectory_t trajectory;
+  assert(joint_trajectory_init(&trajectory, 2u, 4u, ARM_REAL(0.5), true) == ARM_OK);
+  const arm_real_t traj_q0[ARM_DOF_MAX] = {ARM_REAL_ZERO, ARM_REAL_ZERO};
+  const arm_real_t traj_q1[ARM_DOF_MAX] = {ARM_REAL_ONE, ARM_REAL_ZERO};
+  const arm_real_t traj_q2[ARM_DOF_MAX] = {ARM_REAL_ONE, ARM_REAL_ONE};
+  const arm_real_t traj_q3[ARM_DOF_MAX] = {ARM_REAL_ZERO, ARM_REAL_ONE};
+  assert(joint_trajectory_set_waypoint(&trajectory, 0u, traj_q0) == ARM_OK);
+  assert(joint_trajectory_set_waypoint(&trajectory, 1u, traj_q1) == ARM_OK);
+  assert(joint_trajectory_set_waypoint(&trajectory, 2u, traj_q2) == ARM_OK);
+  assert(joint_trajectory_set_waypoint(&trajectory, 3u, traj_q3) == ARM_OK);
+  arm_reference_t traj_ref0;
+  arm_reference_t traj_ref_mid;
+  assert(joint_trajectory_sample(&trajectory, ARM_REAL_ZERO, &traj_ref0) == ARM_OK);
+  assert(joint_trajectory_sample(&trajectory, ARM_REAL(0.25), &traj_ref_mid) == ARM_OK);
+  assert(traj_ref0.flags == (ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID));
+  assert(arm_abs(traj_ref0.q_ref_rad[0] - traj_q0[0]) < ARM_REAL(1e-9));
+  assert(traj_ref_mid.q_ref_rad[0] > traj_q0[0] && traj_ref_mid.q_ref_rad[0] < traj_q1[0]);
+  assert(arm_abs(traj_ref_mid.dq_ref_rad_s[0]) > ARM_REAL(1e-6));
+
+  assert(joint_trajectory_init(&trajectory, 1u, 2u, ARM_REAL(0.5), false) == ARM_OK);
+  const arm_real_t line_q0[ARM_DOF_MAX] = {ARM_REAL_ZERO};
+  const arm_real_t line_q1[ARM_DOF_MAX] = {ARM_REAL_ONE};
+  assert(joint_trajectory_set_waypoint(&trajectory, 0u, line_q0) == ARM_OK);
+  assert(joint_trajectory_set_waypoint(&trajectory, 1u, line_q1) == ARM_OK);
+  arm_reference_t line_done;
+  assert(joint_trajectory_sample(&trajectory, ARM_REAL(2.0), &line_done) == ARM_OK);
+  assert(arm_abs(line_done.q_ref_rad[0] - ARM_REAL_ONE) < ARM_REAL(1e-9));
+  assert(near_zero(line_done.dq_ref_rad_s[0]));
+  assert(near_zero(line_done.ddq_ref_rad_s2[0]));
 
   return 0;
 }

@@ -1,6 +1,7 @@
 add_library(arm_motion STATIC
   src/kinematics/joint_kinematics.c
   src/reference/joint_ref_shaper.c
+  src/trajectory/joint_trajectory.c
 )
 
 target_include_directories(arm_motion

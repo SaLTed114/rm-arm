@@ -48,6 +48,13 @@ Run focused joint-space control cases:
 python tools\run_control_benchmarks.py --scenario step_j2_harsh --scenario step_j3_harsh --scenario coupled_j2j3_harsh --scenario sine_j2_harsh --scenario straight_arm_lift_harsh --ff gravity --harsh on --contacts on
 ```
 
+Run a teleop-like q-only multi-joint case. This updates only raw joint position
+goals and lets `joint_ref_shaper` generate `q/dq/ddq` for control:
+
+```powershell
+python tools\run_control_benchmarks.py --scenario teleop_wave_j2j3j5_harsh --ff gravity --harsh on --contacts on
+```
+
 Run task-space tool path cases:
 
 ```powershell
@@ -81,12 +88,13 @@ Open a benchmark GUI while running one case:
 .\build\sim_mujoco\armsim_control_benchmark.exe tool_circle_xz_harsh logs\control_benchmark_tool_circle_xz_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on
 ```
 
-Open IK-derived joint-space trajectory GUI cases with a tuned override file:
+Open IK-derived joint-space trajectory GUI cases:
 
 ```powershell
-.\build\sim_mujoco\armsim_control_benchmark.exe joint_circle_j2j3_harsh logs\control_benchmark_joint_circle_j2j3_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on --param-overrides=logs\tuning_runs\20260607_162907\best.params
-.\build\sim_mujoco\armsim_control_benchmark.exe joint_square_j2j3_harsh logs\control_benchmark_joint_square_j2j3_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on --param-overrides=logs\tuning_runs\20260607_162907\best.params
-.\build\sim_mujoco\armsim_control_benchmark.exe joint_insert_line_harsh logs\control_benchmark_joint_insert_line_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on --param-overrides=logs\tuning_runs\20260607_162907\best.params
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_circle_j2j3_harsh logs\control_benchmark_joint_circle_j2j3_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_square_j2j3_harsh logs\control_benchmark_joint_square_j2j3_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_insert_line_harsh logs\control_benchmark_joint_insert_line_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on
+.\build\sim_mujoco\armsim_control_benchmark.exe teleop_wave_j2j3j5_harsh logs\control_benchmark_teleop_wave_j2j3j5_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on
 ```
 
 For benchmark GUI trails, cyan is the desired `tool0` path and orange is the
@@ -159,6 +167,9 @@ Run one benchmark with a tuned override file:
 ```powershell
 python tools\run_control_benchmarks.py --scenario step_j2_harsh --param-overrides logs\tuning_runs\<timestamp>\best.params --ff gravity --harsh on --contacts on
 ```
+
+Treat old tuning runs as benchmark-specific. If benchmark trajectory generation
+changes, rerun tuning instead of reusing an older `best.params`.
 
 Inspect the model-derived seed and diagnostics from a tuning run:
 
