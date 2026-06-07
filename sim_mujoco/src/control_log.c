@@ -132,7 +132,7 @@ bool control_log_write_step(
   (void)fprintf(
       log->file,
       "%.9f,%u,%u,%u,%u,%u",
-      (double)data->time,
+      (double)filtered_state->time_s,
       f->gravity_on ? 1u : 0u,
       f->gravity_ff_on ? 1u : 0u,
       f->inverse_dyn_ff_on ? 1u : 0u,

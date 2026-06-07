@@ -105,8 +105,14 @@ typedef struct {
   mjvScene scene;
   mjrContext context;
   mjtNum next_render_time;
+  mjtNum next_record_time;
   mjtNum next_trail_time;
   int trail_count;
+  int record_index;
+  bool visible;
+  bool record_enabled;
+  double record_fps;
+  char record_frame_dir[512];
   mjtNum actual_trail[BENCHMARK_TRAIL_MAX][3];
   mjtNum target_trail[BENCHMARK_TRAIL_MAX][3];
 #endif
@@ -469,9 +475,16 @@ static void configure_initial_pose_for_scenario(
   mj_forward(model, data);
 }
 
-static int benchmark_gui_init(benchmark_gui_t *gui, const benchmark_app_t *app, bool enabled) {
+static int benchmark_gui_init(
+    benchmark_gui_t *gui,
+    const benchmark_app_t *app,
+    bool visible,
+    const char *record_frame_dir,
+    double record_fps) {
   if (!gui) return ARM_ERR_NULL;
   gui->enabled = false;
+  const bool record_enabled = record_frame_dir && record_frame_dir[0];
+  const bool enabled = visible || record_enabled;
   if (!enabled) return ARM_OK;
 
 #if defined(ARMSIM_BENCHMARK_WITH_GUI)
@@ -481,6 +494,7 @@ static int benchmark_gui_init(benchmark_gui_t *gui, const benchmark_app_t *app, 
     return ARM_ERR_CONFIG;
   }
 
+  glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE);
   gui->window = glfwCreateWindow(1280, 720, "ArmSim Control Benchmark", NULL, NULL);
   if (!gui->window) {
     glfwTerminate();
@@ -504,12 +518,24 @@ static int benchmark_gui_init(benchmark_gui_t *gui, const benchmark_app_t *app, 
   gui->camera.lookat[1] = 0.0;
   gui->camera.lookat[2] = 0.20;
   gui->next_render_time = 0.0;
+  gui->next_record_time = 0.0;
   gui->next_trail_time = 0.0;
   gui->trail_count = 0;
+  gui->record_index = 0;
+  gui->visible = visible;
+  gui->record_enabled = record_enabled;
+  gui->record_fps = record_fps > 0.0 ? record_fps : 24.0;
+  gui->record_frame_dir[0] = '\0';
+  if (record_enabled) {
+    (void)snprintf(gui->record_frame_dir, sizeof(gui->record_frame_dir), "%s", record_frame_dir);
+  }
   gui->enabled = true;
   return ARM_OK;
 #else
   (void)app;
+  (void)visible;
+  (void)record_frame_dir;
+  (void)record_fps;
   fprintf(stderr, "Benchmark GUI was not built because GLFW/OpenGL was not available.\n");
   return ARM_ERR_CONFIG;
 #endif
@@ -521,6 +547,20 @@ static bool benchmark_gui_should_stop(const benchmark_gui_t *gui) {
 #else
   (void)gui;
   return false;
+#endif
+}
+
+static void benchmark_gui_reset_run(benchmark_gui_t *gui, mjtNum start_time) {
+#if defined(ARMSIM_BENCHMARK_WITH_GUI)
+  if (!gui || !gui->enabled) return;
+  gui->next_render_time = start_time;
+  gui->next_record_time = start_time;
+  gui->next_trail_time = start_time;
+  gui->trail_count = 0;
+  gui->record_index = 0;
+#else
+  (void)gui;
+  (void)start_time;
 #endif
 }
 
@@ -609,11 +649,45 @@ static void benchmark_gui_draw_trail(
 #endif
 }
 
+static int benchmark_gui_write_frame_ppm(benchmark_gui_t *gui, const mjrRect viewport) {
+#if defined(ARMSIM_BENCHMARK_WITH_GUI)
+  if (!gui || !gui->record_enabled || viewport.width <= 0 || viewport.height <= 0) return ARM_OK;
+
+  const size_t row_bytes = (size_t)viewport.width * 3u;
+  const size_t byte_count = row_bytes * (size_t)viewport.height;
+  unsigned char *pixels = (unsigned char *)malloc(byte_count);
+  if (!pixels) return ARM_ERR_CONFIG;
+
+  mjr_readPixels(pixels, NULL, viewport, &gui->context);
+
+  char path[768];
+  (void)snprintf(path, sizeof(path), "%s/frame_%05d.ppm", gui->record_frame_dir, gui->record_index++);
+  FILE *file = fopen(path, "wb");
+  if (!file) {
+    free(pixels);
+    return ARM_ERR_CONFIG;
+  }
+  (void)fprintf(file, "P6\n%d %d\n255\n", viewport.width, viewport.height);
+  for (int row = viewport.height - 1; row >= 0; --row) {
+    (void)fwrite(pixels + (size_t)row * row_bytes, 1u, row_bytes, file);
+  }
+  fclose(file);
+  free(pixels);
+  return ARM_OK;
+#else
+  (void)gui;
+  (void)viewport;
+  return ARM_OK;
+#endif
+}
+
 static void benchmark_gui_render(benchmark_gui_t *gui, const benchmark_app_t *app) {
 #if defined(ARMSIM_BENCHMARK_WITH_GUI)
   if (!gui || !gui->enabled || !app || !app->model || !app->data) return;
   benchmark_gui_record_trail(gui, app);
-  if (app->data->time + 1.0e-12 < gui->next_render_time) return;
+  const bool display_due = gui->visible && app->data->time + 1.0e-12 >= gui->next_render_time;
+  const bool record_due = gui->record_enabled && app->data->time + 1.0e-12 >= gui->next_record_time;
+  if (!display_due && !record_due) return;
 
   int width = 0;
   int height = 0;
@@ -626,9 +700,18 @@ static void benchmark_gui_render(benchmark_gui_t *gui, const benchmark_app_t *ap
   benchmark_gui_draw_trail(&gui->scene, gui->target_trail, gui->trail_count, target_rgba, 3.0);
   benchmark_gui_draw_trail(&gui->scene, gui->actual_trail, gui->trail_count, actual_rgba, 4.0);
   mjr_render(viewport, &gui->scene, &gui->context);
-  glfwSwapBuffers(gui->window);
-  glfwPollEvents();
-  gui->next_render_time = app->data->time + 1.0 / 60.0;
+  if (record_due) {
+    if (benchmark_gui_write_frame_ppm(gui, viewport) != ARM_OK) {
+      fprintf(stderr, "Failed to write benchmark recording frame.\n");
+      gui->record_enabled = false;
+    }
+    gui->next_record_time = app->data->time + 1.0 / gui->record_fps;
+  }
+  if (gui->visible) {
+    glfwSwapBuffers(gui->window);
+    glfwPollEvents();
+    if (display_due) gui->next_render_time = app->data->time + 1.0 / 60.0;
+  }
 #else
   (void)gui;
   (void)app;
@@ -1257,6 +1340,9 @@ int main(int argc, char **argv) {
   bool harsh_enabled = true;
   bool contacts_enabled = true;
   bool gui_enabled = false;
+  const char *record_frame_dir = NULL;
+  double record_fps = 24.0;
+  double warmup_s_arg = 1.0;
   const char *param_override_path = NULL;
   if (argc > 1 && parse_scenario(argv[1], &scenario) != ARM_OK) {
     fprintf(stderr, "Unknown scenario '%s'.\n", argv[1]);
@@ -1284,6 +1370,20 @@ int main(int argc, char **argv) {
     } else if (strncmp(argv[i], "--gui=", 6) == 0) {
       if (parse_on_off(argv[i] + 6, &gui_enabled) != ARM_OK) {
         fprintf(stderr, "Unknown GUI mode '%s'.\n", argv[i] + 6);
+        return EXIT_FAILURE;
+      }
+    } else if (strncmp(argv[i], "--record-frames=", 16) == 0) {
+      record_frame_dir = argv[i] + 16;
+    } else if (strncmp(argv[i], "--record-fps=", 13) == 0) {
+      record_fps = strtod(argv[i] + 13, NULL);
+      if (record_fps <= 0.0) {
+        fprintf(stderr, "Invalid record FPS '%s'.\n", argv[i] + 13);
+        return EXIT_FAILURE;
+      }
+    } else if (strncmp(argv[i], "--warmup=", 9) == 0) {
+      warmup_s_arg = strtod(argv[i] + 9, NULL);
+      if (warmup_s_arg < 0.0) {
+        fprintf(stderr, "Invalid warmup duration '%s'.\n", argv[i] + 9);
         return EXIT_FAILURE;
       }
     } else if (strncmp(argv[i], "--param-overrides=", 18) == 0) {
@@ -1323,7 +1423,7 @@ int main(int argc, char **argv) {
   app.ff_mode = ff_mode;
 
   benchmark_gui_t gui = {0};
-  status = benchmark_gui_init(&gui, &app, gui_enabled);
+  status = benchmark_gui_init(&gui, &app, gui_enabled, record_frame_dir, record_fps);
   if (status != ARM_OK) {
     destroy_app(&app);
     return EXIT_FAILURE;
@@ -1344,13 +1444,27 @@ int main(int argc, char **argv) {
       app.harsh_enabled,
   };
   const arm_real_t duration_s = ARM_REAL(5.0);
-  while (ARM_REAL(app.data->time) < duration_s && !benchmark_gui_should_stop(&gui)) {
-    status = update_scenario_goal(&app, scenario, ARM_REAL(app.data->time));
-    if (status != ARM_OK) {
-      fprintf(stderr, "Scenario update failed: %d\n", status);
-      benchmark_gui_close(&gui);
-      destroy_app(&app);
-      return EXIT_FAILURE;
+  const arm_real_t warmup_s = ARM_REAL(warmup_s_arg);
+  bool benchmark_started = false;
+  while (ARM_REAL(app.data->time) < warmup_s + duration_s && !benchmark_gui_should_stop(&gui)) {
+    const arm_real_t sim_time_s = ARM_REAL(app.data->time);
+    const bool in_warmup = sim_time_s < warmup_s;
+    if (in_warmup) {
+      app.use_direct_ref = false;
+    } else {
+      if (!benchmark_started) {
+        set_initial_reference(&app, &app.core.state);
+        arm_output_limiter_reset_to_command(&app.output_limiter, &app.core.command);
+        benchmark_gui_reset_run(&gui, app.data->time);
+        benchmark_started = true;
+      }
+      status = update_scenario_goal(&app, scenario, sim_time_s - warmup_s);
+      if (status != ARM_OK) {
+        fprintf(stderr, "Scenario update failed: %d\n", status);
+        benchmark_gui_close(&gui);
+        destroy_app(&app);
+        return EXIT_FAILURE;
+      }
     }
     if (!app.use_direct_ref) {
       status = joint_ref_shaper_step(&app.shaper, &app.core.state, &app.manual_goal_ref, &app.active_ref);
@@ -1382,6 +1496,8 @@ int main(int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
+    if (in_warmup) continue;
+
     arm_real_t tau_ff_gravity[ARM_DOF_MAX];
     arm_real_t tau_ff_model[ARM_DOF_MAX];
     arm_real_t tool_pos[3];
@@ -1394,14 +1510,20 @@ int main(int argc, char **argv) {
     if (benchmark_app_tool_ref_position(&app, tool_ref) != ARM_OK) {
       arm_vec3_copy(tool_pos, tool_ref);
     }
+    arm_state_t measured_log = app.measured_state;
+    arm_state_t filtered_log = app.core.state;
+    const arm_real_t log_time_s = ARM_REAL(app.data->time) - warmup_s;
+    measured_log.time_s = log_time_s;
+    filtered_log.time_s = log_time_s;
+
     (void)control_log_write_step(
         &app.log,
         app.model,
         app.data,
         &app.mj_arm,
         &flags,
-        &app.measured_state,
-        &app.core.state,
+        &measured_log,
+        &filtered_log,
         &app.active_ref,
         tool_pos,
         tool_ref,

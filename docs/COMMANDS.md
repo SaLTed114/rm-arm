@@ -42,6 +42,15 @@ Run the default benchmark set:
 python tools\run_control_benchmarks.py
 ```
 
+`armsim_control_benchmark` has a default warmup/settle window before logging
+and recording. During warmup the arm holds the initial pose so filters, actuator
+lag, and output rate limiters can settle; CSV metrics and MuJoCo GIF frames start
+after that window. Override it for focused checks:
+
+```powershell
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_circle_j2j3_harsh logs\control_benchmark_joint_circle_j2j3_harsh_nowarmup.csv --ff=gravity --harsh=on --contacts=on --warmup=0
+```
+
 Run focused joint-space control cases:
 
 ```powershell
@@ -132,6 +141,21 @@ python tools\render_control_log_gif.py logs\control_benchmark_joint_square_j2j3_
 
 The GIF uses cyan for desired `tool0`, orange for actual `tool0`, and shows the
 3D tool-position error over time on the right.
+
+## Render MuJoCo Best GIFs
+
+Render MuJoCo-view GIFs for representative cases into `logs/best/`. By default
+this uses the latest `logs/tuning_runs/<timestamp>/best.params`; pass
+`--baseline` to render the checked-in YAML parameters instead.
+
+```powershell
+python tools\make_best_visuals.py
+python tools\make_best_visuals.py --baseline
+python tools\make_best_visuals.py --param-overrides logs\tuning_runs\<timestamp>\best.params
+```
+
+Each case writes a CSV log, metrics JSON, and MuJoCo GIF under
+`logs\best\<scenario>\`. The script also writes `logs\best\manifest.json`.
 
 ## Tune Parameters
 
