@@ -37,11 +37,14 @@ DEFAULT_MAIN_SCENARIOS = (
     "step_j3_harsh",
     "coupled_j2j3_harsh",
     "sine_j2_harsh",
-    "tool_circle_xz_harsh",
-    "tool_insert_line_harsh",
+    "joint_circle_j2j3_harsh",
+    "joint_square_j2j3_harsh",
+    "joint_insert_line_harsh",
 )
 DEFAULT_CHECK_SCENARIOS = (
+    "tool_circle_xz_harsh",
     "tool_square_xz_harsh",
+    "tool_insert_line_harsh",
     "tool_circle_xy_harsh",
     "tool_circle_yz_harsh",
     "tool_square_xy_harsh",
@@ -54,8 +57,9 @@ SCENARIO_WEIGHTS = {
     "step_j3_harsh": 1.0,
     "coupled_j2j3_harsh": 1.2,
     "sine_j2_harsh": 0.8,
-    "tool_circle_xz_harsh": 1.7,
-    "tool_insert_line_harsh": 1.8,
+    "joint_circle_j2j3_harsh": 1.6,
+    "joint_square_j2j3_harsh": 1.4,
+    "joint_insert_line_harsh": 1.8,
 }
 BIG_PENALTY = 1.0e9
 VERBOSE_COMMANDS = False

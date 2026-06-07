@@ -28,6 +28,9 @@ DEFAULT_SCENARIOS = (
     "tool_square_xz_harsh",
     "tool_square_yz_harsh",
     "tool_insert_line_harsh",
+    "joint_circle_j2j3_harsh",
+    "joint_square_j2j3_harsh",
+    "joint_insert_line_harsh",
 )
 DEFAULT_FF_MODES = ("gravity",)
 DEFAULT_HARSH_MODES = ("on",)

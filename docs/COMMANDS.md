@@ -54,6 +54,15 @@ Run task-space tool path cases:
 python tools\run_control_benchmarks.py --scenario tool_circle_xz_harsh --scenario tool_square_xz_harsh --scenario tool_insert_line_harsh --ff gravity --harsh on --contacts on
 ```
 
+Run joint-space trajectory cases. These benchmark cases build an IK-derived
+joint waypoint table at startup, then track only joint-space `q/dq/ddq`
+references. They approximate the intended offline-IK/upstream-planner flow and
+are the preferred control-tuning cases for the current task mix:
+
+```powershell
+python tools\run_control_benchmarks.py --scenario joint_circle_j2j3_harsh --scenario joint_square_j2j3_harsh --scenario joint_insert_line_harsh --ff gravity --harsh on --contacts on
+```
+
 Run all circle/square task-space planes:
 
 ```powershell
@@ -72,8 +81,18 @@ Open a benchmark GUI while running one case:
 .\build\sim_mujoco\armsim_control_benchmark.exe tool_circle_xz_harsh logs\control_benchmark_tool_circle_xz_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on
 ```
 
-For task-space benchmark GUI trails, cyan is the desired tool path and orange is
-the actual `tool0` path.
+Open IK-derived joint-space trajectory GUI cases with a tuned override file:
+
+```powershell
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_circle_j2j3_harsh logs\control_benchmark_joint_circle_j2j3_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on --param-overrides=logs\tuning_runs\20260607_162907\best.params
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_square_j2j3_harsh logs\control_benchmark_joint_square_j2j3_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on --param-overrides=logs\tuning_runs\20260607_162907\best.params
+.\build\sim_mujoco\armsim_control_benchmark.exe joint_insert_line_harsh logs\control_benchmark_joint_insert_line_harsh_gui.csv --ff=gravity --harsh=on --contacts=on --gui=on --param-overrides=logs\tuning_runs\20260607_162907\best.params
+```
+
+For benchmark GUI trails, cyan is the desired `tool0` path and orange is the
+actual `tool0` path. Task-space cases draw the requested tool target directly;
+joint-space trajectory cases draw the FK result of the requested joint
+reference.
 
 ## Analyze Existing Logs
 
@@ -93,6 +112,19 @@ Analyze existing benchmark CSV files without rerunning simulation:
 python tools\run_control_benchmarks.py --skip-run --scenario tool_circle_xz_harsh --scenario tool_square_xz_harsh --scenario tool_insert_line_harsh --ff gravity --harsh on --contacts on
 ```
 
+## Render Log GIF
+
+Render desired and actual `tool0` paths from an existing benchmark CSV. This is
+offline and does not open MuJoCo:
+
+```powershell
+python tools\render_control_log_gif.py logs\control_benchmark_joint_circle_j2j3_harsh_gravity_harsh-on_contacts-on.csv --out logs\joint_circle_j2j3.gif --plane xz
+python tools\render_control_log_gif.py logs\control_benchmark_joint_square_j2j3_harsh_gravity_harsh-on_contacts-on.csv --out logs\joint_square_j2j3.gif --plane xz
+```
+
+The GIF uses cyan for desired `tool0`, orange for actual `tool0`, and shows the
+3D tool-position error over time on the right.
+
 ## Tune Parameters
 
 Run the first-pass automatic tuner. It writes candidate configs and summaries
@@ -103,7 +135,8 @@ not regenerate files or rebuild the C executable; run `cmake --build build`
 manually first if the benchmark binary is stale. Candidate 0 is the current
 YAML baseline, candidate 1 is a model-derived seed, and later candidates are
 internal CMA-style high-level scale samples around that seed. The tuner does
-not depend on the external `cma` Python package.
+not depend on the external `cma` Python package. The default main loss is now
+joint-space centric; task-space tool paths are check-only diagnostics.
 
 ```powershell
 python tools\tune_control_params.py --budget 30 --seed 1

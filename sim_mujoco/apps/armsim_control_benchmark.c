@@ -29,6 +29,7 @@
 
 #define BENCHMARK_TRAIL_MAX 360
 #define BENCHMARK_TRAIL_DT_S 0.02
+#define BENCHMARK_JOINT_TRAJ_MAX 96
 
 typedef enum {
   SCENARIO_HOLD_ZERO_HARSH = 0,
@@ -47,6 +48,9 @@ typedef enum {
   SCENARIO_TOOL_SQUARE_XZ_HARSH = 13,
   SCENARIO_TOOL_SQUARE_YZ_HARSH = 14,
   SCENARIO_TOOL_INSERT_LINE_HARSH = 15,
+  SCENARIO_JOINT_CIRCLE_J2J3_HARSH = 16,
+  SCENARIO_JOINT_SQUARE_J2J3_HARSH = 17,
+  SCENARIO_JOINT_INSERT_LINE_HARSH = 18,
 } benchmark_scenario_t;
 
 typedef enum {
@@ -78,8 +82,14 @@ typedef struct {
   arm_real_t initial_tool_pos[3];
   arm_real_t tool_target_pos[3];
   arm_real_t tool_ik_seed_q_rad[ARM_DOF_MAX];
+  arm_real_t joint_traj_waypoints[BENCHMARK_JOINT_TRAJ_MAX][ARM_DOF_MAX];
+  uint8_t joint_traj_count;
+  arm_real_t joint_traj_segment_s;
+  bool joint_traj_loop;
+  bool joint_traj_valid;
   bool tool_target_valid;
   bool tool_ik_seed_valid;
+  bool use_direct_ref;
   benchmark_ff_mode_t ff_mode;
   armsim_impairment_t impairment;
   control_log_t log;
@@ -142,6 +152,12 @@ static const char *scenario_name(benchmark_scenario_t scenario) {
       return "tool_square_yz_harsh";
     case SCENARIO_TOOL_INSERT_LINE_HARSH:
       return "tool_insert_line_harsh";
+    case SCENARIO_JOINT_CIRCLE_J2J3_HARSH:
+      return "joint_circle_j2j3_harsh";
+    case SCENARIO_JOINT_SQUARE_J2J3_HARSH:
+      return "joint_square_j2j3_harsh";
+    case SCENARIO_JOINT_INSERT_LINE_HARSH:
+      return "joint_insert_line_harsh";
     default:
       return "unknown";
   }
@@ -211,6 +227,18 @@ static int parse_scenario(const char *name, benchmark_scenario_t *scenario) {
   }
   if (strcmp(name, "tool_insert_line_harsh") == 0) {
     *scenario = SCENARIO_TOOL_INSERT_LINE_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "joint_circle_j2j3_harsh") == 0) {
+    *scenario = SCENARIO_JOINT_CIRCLE_J2J3_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "joint_square_j2j3_harsh") == 0) {
+    *scenario = SCENARIO_JOINT_SQUARE_J2J3_HARSH;
+    return ARM_OK;
+  }
+  if (strcmp(name, "joint_insert_line_harsh") == 0) {
+    *scenario = SCENARIO_JOINT_INSERT_LINE_HARSH;
     return ARM_OK;
   }
   return ARM_ERR_CONFIG;
@@ -387,6 +415,12 @@ static bool scenario_uses_tool_path(benchmark_scenario_t scenario) {
          scenario == SCENARIO_TOOL_INSERT_LINE_HARSH;
 }
 
+static bool scenario_uses_joint_trajectory(benchmark_scenario_t scenario) {
+  return scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH ||
+         scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH ||
+         scenario == SCENARIO_JOINT_INSERT_LINE_HARSH;
+}
+
 static void set_initial_joint_pose(
     const mjModel *model,
     mjData *data,
@@ -411,6 +445,14 @@ static void configure_initial_pose_for_scenario(
     benchmark_scenario_t scenario) {
   arm_real_t q_rad[ARM_DOF_MAX] = {0};
   if (scenario_uses_tool_path(scenario)) {
+    q_rad[1] = ARM_REAL(-0.65);
+    q_rad[2] = ARM_REAL(0.85);
+    q_rad[4] = ARM_REAL(-0.20);
+  } else if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) {
+    q_rad[1] = ARM_REAL(-0.32);
+    q_rad[2] = ARM_REAL(0.58);
+  } else if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH ||
+             scenario == SCENARIO_JOINT_INSERT_LINE_HARSH) {
     q_rad[1] = ARM_REAL(-0.65);
     q_rad[2] = ARM_REAL(0.85);
     q_rad[4] = ARM_REAL(-0.20);
@@ -474,6 +516,23 @@ static bool benchmark_gui_should_stop(const benchmark_gui_t *gui) {
 #endif
 }
 
+static int benchmark_app_tool_ref_position(const benchmark_app_t *app, arm_real_t tool_ref[3]) {
+  if (!app || !tool_ref) return ARM_ERR_NULL;
+  if (app->tool_target_valid) {
+    arm_vec3_copy(app->tool_target_pos, tool_ref);
+    return ARM_OK;
+  }
+  if ((app->active_ref.flags & ARM_REFERENCE_Q_VALID) == 0u) return ARM_ERR_CONFIG;
+
+  arm_state_t ref_state = app->core.state;
+  ref_state.dof = app->active_ref.dof;
+  ref_state.flags |= ARM_STATE_Q_VALID;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    ref_state.q_rad[i] = app->active_ref.q_ref_rad[i];
+  }
+  return joint_kinematics_fk_position(&app->kinematics, &ref_state, tool_ref);
+}
+
 static void benchmark_gui_push_trail_point(benchmark_gui_t *gui, const arm_real_t actual[3], const arm_real_t target[3]) {
 #if defined(ARMSIM_BENCHMARK_WITH_GUI)
   if (!gui) return;
@@ -500,12 +559,14 @@ static void benchmark_gui_push_trail_point(benchmark_gui_t *gui, const arm_real_
 
 static void benchmark_gui_record_trail(benchmark_gui_t *gui, const benchmark_app_t *app) {
 #if defined(ARMSIM_BENCHMARK_WITH_GUI)
-  if (!gui || !gui->enabled || !app || !app->tool_target_valid) return;
+  if (!gui || !gui->enabled || !app) return;
   if (app->data->time + 1.0e-12 < gui->next_trail_time) return;
 
   arm_real_t actual[3];
+  arm_real_t target[3];
   if (joint_kinematics_fk_position(&app->kinematics, &app->core.state, actual) != ARM_OK) return;
-  benchmark_gui_push_trail_point(gui, actual, app->tool_target_pos);
+  if (benchmark_app_tool_ref_position(app, target) != ARM_OK) return;
+  benchmark_gui_push_trail_point(gui, actual, target);
   gui->next_trail_time = app->data->time + BENCHMARK_TRAIL_DT_S;
 #else
   (void)gui;
@@ -856,13 +917,254 @@ static int update_tool_scenario_goal(benchmark_app_t *app, benchmark_scenario_t 
   return solve_tool_target(app, target);
 }
 
+static benchmark_scenario_t joint_trajectory_source_tool_scenario(benchmark_scenario_t scenario) {
+  if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) return SCENARIO_TOOL_CIRCLE_XZ_HARSH;
+  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return SCENARIO_TOOL_SQUARE_XZ_HARSH;
+  if (scenario == SCENARIO_JOINT_INSERT_LINE_HARSH) return SCENARIO_TOOL_INSERT_LINE_HARSH;
+  return SCENARIO_HOLD_ZERO_HARSH;
+}
+
+static arm_real_t joint_trajectory_period_s(benchmark_scenario_t scenario) {
+  if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) return ARM_REAL(3.2);
+  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return ARM_REAL(3.4);
+  if (scenario == SCENARIO_JOINT_INSERT_LINE_HARSH) return ARM_REAL(4.2);
+  return ARM_REAL_ZERO;
+}
+
+static uint8_t joint_trajectory_sample_count(benchmark_scenario_t scenario) {
+  if (scenario == SCENARIO_JOINT_CIRCLE_J2J3_HARSH) return 64u;
+  if (scenario == SCENARIO_JOINT_SQUARE_J2J3_HARSH) return 72u;
+  if (scenario == SCENARIO_JOINT_INSERT_LINE_HARSH) return 85u;
+  return 0u;
+}
+
+static int tool_path_target_at_time(
+    const benchmark_app_t *app,
+    benchmark_scenario_t tool_scenario,
+    arm_real_t t,
+    arm_real_t target[3]) {
+  if (!app || !target) return ARM_ERR_NULL;
+  if (t < ARM_REAL_ZERO) t = ARM_REAL_ZERO;
+  arm_vec3_copy(app->initial_tool_pos, target);
+
+  uint8_t axis_a = 0u;
+  uint8_t axis_b = 2u;
+  if (circle_plane_axes(tool_scenario, &axis_a, &axis_b)) {
+    const arm_real_t radius = ARM_REAL(0.080);
+    const arm_real_t omega = ARM_REAL(2) * ARM_REAL_PI / ARM_REAL(3.2);
+    const arm_real_t theta = omega * t;
+    target[axis_a] = app->initial_tool_pos[axis_a] - radius + radius * ARM_REAL(cos((double)theta));
+    target[axis_b] = app->initial_tool_pos[axis_b] + radius * ARM_REAL(sin((double)theta));
+    return ARM_OK;
+  }
+  if (square_plane_axes(tool_scenario, &axis_a, &axis_b)) {
+    const arm_real_t half_size = ARM_REAL(0.075);
+    arm_real_t center[3];
+    arm_vec3_copy(app->initial_tool_pos, center);
+    center[axis_a] -= half_size;
+    center[axis_b] -= half_size;
+    square_plane_target(center, axis_a, axis_b, half_size, t / ARM_REAL(0.85), target);
+    return ARM_OK;
+  }
+  if (tool_scenario == SCENARIO_TOOL_INSERT_LINE_HARSH) {
+    const arm_real_t distance = ARM_REAL(0.080);
+    arm_real_t progress = ARM_REAL_ZERO;
+    if (t < ARM_REAL(1.6)) {
+      progress = t / ARM_REAL(1.6);
+    } else if (t < ARM_REAL(2.6)) {
+      progress = ARM_REAL_ONE;
+    } else if (t < ARM_REAL(4.2)) {
+      progress = ARM_REAL_ONE - (t - ARM_REAL(2.6)) / ARM_REAL(1.6);
+    }
+    progress = arm_clamp(progress, ARM_REAL_ZERO, ARM_REAL_ONE);
+    target[0] = app->initial_tool_pos[0] - distance * progress;
+    return ARM_OK;
+  }
+  return ARM_ERR_CONFIG;
+}
+
+static int build_joint_trajectory_from_ik(benchmark_app_t *app, benchmark_scenario_t scenario) {
+  if (!app || !scenario_uses_joint_trajectory(scenario)) return ARM_ERR_CONFIG;
+  const uint8_t sample_count = joint_trajectory_sample_count(scenario);
+  const arm_real_t period_s = joint_trajectory_period_s(scenario);
+  if (sample_count < 2u || sample_count > BENCHMARK_JOINT_TRAJ_MAX || period_s <= ARM_REAL_ZERO) return ARM_ERR_CONFIG;
+
+  const benchmark_scenario_t tool_scenario = joint_trajectory_source_tool_scenario(scenario);
+  const bool loop = scenario != SCENARIO_JOINT_INSERT_LINE_HARSH;
+  const arm_real_t divisor = loop ? ARM_REAL(sample_count) : ARM_REAL((uint8_t)(sample_count - 1u));
+  arm_state_t seed_state = app->core.state;
+  joint_ik_position_options_t options = {
+      32u,
+      ARM_REAL(0.035),
+      ARM_REAL(0.10),
+      ARM_REAL(0.0025),
+      app->initial_q_rad,
+      ARM_REAL(0.015),
+  };
+
+  for (uint8_t sample = 0u; sample < sample_count; ++sample) {
+    arm_real_t target[3];
+    const arm_real_t sample_time_s = period_s * ARM_REAL(sample) / divisor;
+    int status = tool_path_target_at_time(app, tool_scenario, sample_time_s, target);
+    if (status != ARM_OK) return status;
+
+    arm_reference_t solved_ref;
+    status = joint_ik_position_solve(&app->kinematics, &seed_state, target, &options, &solved_ref);
+    if (status != ARM_OK) return status;
+    for (uint8_t joint = 0u; joint < app->core.config.dof; ++joint) {
+      const arm_real_t q = solved_ref.q_ref_rad[joint];
+      app->joint_traj_waypoints[sample][joint] = q;
+      seed_state.q_rad[joint] = q;
+      seed_state.dq_rad_s[joint] = ARM_REAL_ZERO;
+    }
+  }
+
+  app->joint_traj_count = sample_count;
+  app->joint_traj_loop = loop;
+  app->joint_traj_segment_s = loop ? (period_s / ARM_REAL(sample_count)) : (period_s / ARM_REAL((uint8_t)(sample_count - 1u)));
+  app->joint_traj_valid = true;
+  return ARM_OK;
+}
+
+static void set_direct_ref_from_q_dq_ddq(
+    benchmark_app_t *app,
+    const arm_real_t q[ARM_DOF_MAX],
+    const arm_real_t dq[ARM_DOF_MAX],
+    const arm_real_t ddq[ARM_DOF_MAX]) {
+  arm_reference_zero(&app->active_ref, app->core.config.dof);
+  app->active_ref.flags = ARM_REFERENCE_Q_VALID | ARM_REFERENCE_DQ_VALID | ARM_REFERENCE_DDQ_VALID;
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    app->active_ref.q_ref_rad[i] = q[i];
+    app->active_ref.dq_ref_rad_s[i] = dq[i];
+    app->active_ref.ddq_ref_rad_s2[i] = ddq[i];
+    app->manual_goal_ref.q_ref_rad[i] = q[i];
+    app->manual_goal_ref.dq_ref_rad_s[i] = dq[i];
+    app->manual_goal_ref.ddq_ref_rad_s2[i] = ddq[i];
+  }
+  app->manual_goal_ref.flags = app->active_ref.flags;
+  app->use_direct_ref = true;
+  app->tool_target_valid = false;
+  reset_tool_ik_seed(app);
+}
+
+static void set_direct_ref_hold(benchmark_app_t *app, const arm_real_t q[ARM_DOF_MAX]) {
+  arm_real_t dq[ARM_DOF_MAX] = {0};
+  arm_real_t ddq[ARM_DOF_MAX] = {0};
+  set_direct_ref_from_q_dq_ddq(app, q, dq, ddq);
+}
+
+static uint8_t trajectory_prev_index(uint8_t index, uint8_t count, bool loop) {
+  if (index > 0u) return (uint8_t)(index - 1u);
+  return loop ? (uint8_t)(count - 1u) : 0u;
+}
+
+static uint8_t trajectory_next_index(uint8_t index, uint8_t count, bool loop) {
+  const uint8_t next = (uint8_t)(index + 1u);
+  if (next < count) return next;
+  return loop ? 0u : (uint8_t)(count - 1u);
+}
+
+static arm_real_t trajectory_waypoint_velocity(
+    const arm_real_t waypoints[][ARM_DOF_MAX],
+    uint8_t waypoint_count,
+    uint8_t index,
+    uint8_t joint,
+    arm_real_t segment_duration_s,
+    bool loop) {
+  if (!loop && (index == 0u || index + 1u >= waypoint_count)) return ARM_REAL_ZERO;
+  const uint8_t prev = trajectory_prev_index(index, waypoint_count, loop);
+  const uint8_t next = trajectory_next_index(index, waypoint_count, loop);
+  arm_real_t dt = ARM_REAL(2.0) * segment_duration_s;
+  if (!loop && (index == 0u || index + 1u >= waypoint_count)) dt = segment_duration_s;
+  if (dt <= ARM_REAL_ZERO) return ARM_REAL_ZERO;
+  return (waypoints[next][joint] - waypoints[prev][joint]) / dt;
+}
+
+static int update_joint_segment_trajectory(
+    benchmark_app_t *app,
+    const arm_real_t waypoints[][ARM_DOF_MAX],
+    uint8_t waypoint_count,
+    arm_real_t segment_duration_s,
+    arm_real_t time_s,
+    bool loop) {
+  if (!app || !waypoints || waypoint_count < 2u || segment_duration_s <= ARM_REAL_ZERO) return ARM_ERR_CONFIG;
+
+  const arm_real_t start_s = ARM_REAL(0.8);
+  arm_real_t t = time_s - start_s;
+  if (t <= ARM_REAL_ZERO) {
+    set_direct_ref_hold(app, waypoints[0]);
+    return ARM_OK;
+  }
+
+  const uint8_t segment_count = loop ? waypoint_count : (uint8_t)(waypoint_count - 1u);
+  const arm_real_t total_s = segment_duration_s * ARM_REAL(segment_count);
+  if (loop) {
+    while (t >= total_s) {
+      t -= total_s;
+    }
+  } else if (t >= total_s) {
+    set_direct_ref_hold(app, waypoints[waypoint_count - 1u]);
+    return ARM_OK;
+  }
+
+  uint8_t segment = (uint8_t)(t / segment_duration_s);
+  if (segment >= segment_count) segment = (uint8_t)(segment_count - 1u);
+  const uint8_t next = loop ? (uint8_t)((segment + 1u) % waypoint_count) : (uint8_t)(segment + 1u);
+  const arm_real_t local_t = t - segment_duration_s * ARM_REAL(segment);
+  const arm_real_t p = arm_clamp(local_t / segment_duration_s, ARM_REAL_ZERO, ARM_REAL_ONE);
+  const arm_real_t p2 = p * p;
+  const arm_real_t p3 = p2 * p;
+  const arm_real_t h00 = ARM_REAL(2.0) * p3 - ARM_REAL(3.0) * p2 + ARM_REAL_ONE;
+  const arm_real_t h10 = p3 - ARM_REAL(2.0) * p2 + p;
+  const arm_real_t h01 = ARM_REAL(-2.0) * p3 + ARM_REAL(3.0) * p2;
+  const arm_real_t h11 = p3 - p2;
+  const arm_real_t dh00 = (ARM_REAL(6.0) * p2 - ARM_REAL(6.0) * p) / segment_duration_s;
+  const arm_real_t dh10 = ARM_REAL(3.0) * p2 - ARM_REAL(4.0) * p + ARM_REAL_ONE;
+  const arm_real_t dh01 = (ARM_REAL(-6.0) * p2 + ARM_REAL(6.0) * p) / segment_duration_s;
+  const arm_real_t dh11 = ARM_REAL(3.0) * p2 - ARM_REAL(2.0) * p;
+  const arm_real_t ddh00 = (ARM_REAL(12.0) * p - ARM_REAL(6.0)) / (segment_duration_s * segment_duration_s);
+  const arm_real_t ddh10 = (ARM_REAL(6.0) * p - ARM_REAL(4.0)) / segment_duration_s;
+  const arm_real_t ddh01 = (ARM_REAL(-12.0) * p + ARM_REAL(6.0)) / (segment_duration_s * segment_duration_s);
+  const arm_real_t ddh11 = (ARM_REAL(6.0) * p - ARM_REAL(2.0)) / segment_duration_s;
+
+  arm_real_t q[ARM_DOF_MAX] = {0};
+  arm_real_t dq[ARM_DOF_MAX] = {0};
+  arm_real_t ddq[ARM_DOF_MAX] = {0};
+  for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
+    const arm_real_t q0 = waypoints[segment][i];
+    const arm_real_t q1 = waypoints[next][i];
+    const arm_real_t v0 = trajectory_waypoint_velocity(waypoints, waypoint_count, segment, i, segment_duration_s, loop);
+    const arm_real_t v1 = trajectory_waypoint_velocity(waypoints, waypoint_count, next, i, segment_duration_s, loop);
+    q[i] = h00 * q0 + h10 * segment_duration_s * v0 + h01 * q1 + h11 * segment_duration_s * v1;
+    dq[i] = dh00 * q0 + dh10 * v0 + dh01 * q1 + dh11 * v1;
+    ddq[i] = ddh00 * q0 + ddh10 * v0 + ddh01 * q1 + ddh11 * v1;
+  }
+  set_direct_ref_from_q_dq_ddq(app, q, dq, ddq);
+  return ARM_OK;
+}
+
+static int update_joint_trajectory_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
+  if (!app || !scenario_uses_joint_trajectory(scenario) || !app->joint_traj_valid) return ARM_ERR_CONFIG;
+  return update_joint_segment_trajectory(
+      app,
+      app->joint_traj_waypoints,
+      app->joint_traj_count,
+      app->joint_traj_segment_s,
+      time_s,
+      app->joint_traj_loop);
+}
+
 static int update_scenario_goal(benchmark_app_t *app, benchmark_scenario_t scenario, arm_real_t time_s) {
+  app->use_direct_ref = false;
   for (uint8_t i = 0u; i < app->core.config.dof; ++i) {
     app->manual_goal_ref.dq_ref_rad_s[i] = ARM_REAL_ZERO;
   }
 
   if (scenario_uses_tool_path(scenario)) {
     return update_tool_scenario_goal(app, scenario, time_s);
+  }
+  if (scenario_uses_joint_trajectory(scenario)) {
+    return update_joint_trajectory_goal(app, scenario, time_s);
   }
 
   if (scenario == SCENARIO_STEP_J2_HARSH && time_s >= ARM_REAL(1.0)) {
@@ -988,6 +1290,13 @@ static int load_app(benchmark_app_t *app, const char *model_path, benchmark_scen
   impairment_config.enabled = app->harsh_enabled;
   armsim_impairment_init(&app->impairment, &impairment_config, app->core.config.dof);
   set_initial_reference(app, &app->core.state);
+  if (scenario_uses_joint_trajectory(scenario)) {
+    status = build_joint_trajectory_from_ik(app, scenario);
+    if (status != ARM_OK) {
+      fprintf(stderr, "Failed to build IK-derived joint trajectory for %s: %d\n", scenario_name(scenario), status);
+      return status;
+    }
+  }
   return ARM_OK;
 }
 
@@ -1105,12 +1414,14 @@ int main(int argc, char **argv) {
       destroy_app(&app);
       return EXIT_FAILURE;
     }
-    status = joint_ref_shaper_step(&app.shaper, &app.core.state, &app.manual_goal_ref, &app.active_ref);
-    if (status != ARM_OK) {
-      fprintf(stderr, "Reference shaper failed: %d\n", status);
-      benchmark_gui_close(&gui);
-      destroy_app(&app);
-      return EXIT_FAILURE;
+    if (!app.use_direct_ref) {
+      status = joint_ref_shaper_step(&app.shaper, &app.core.state, &app.manual_goal_ref, &app.active_ref);
+      if (status != ARM_OK) {
+        fprintf(stderr, "Reference shaper failed: %d\n", status);
+        benchmark_gui_close(&gui);
+        destroy_app(&app);
+        return EXIT_FAILURE;
+      }
     }
 
     status = armsim_step_once_impaired_filtered_with_feedforward(
@@ -1142,9 +1453,7 @@ int main(int argc, char **argv) {
     if (joint_kinematics_fk_position(&app.kinematics, &app.core.state, tool_pos) != ARM_OK) {
       arm_vec3_zero(tool_pos);
     }
-    if (app.tool_target_valid) {
-      arm_vec3_copy(app.tool_target_pos, tool_ref);
-    } else {
+    if (benchmark_app_tool_ref_position(&app, tool_ref) != ARM_OK) {
       arm_vec3_copy(tool_pos, tool_ref);
     }
     (void)control_log_write_step(
