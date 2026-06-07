@@ -52,21 +52,11 @@ DEFAULT_CHECK_SCENARIOS = (
     "tool_square_yz_harsh",
     "straight_arm_lift_harsh",
 )
-SCENARIO_WEIGHTS = {
-    "hold_zero_harsh": 0.8,
-    "step_j2_harsh": 1.0,
-    "step_j3_harsh": 1.0,
-    "coupled_j2j3_harsh": 1.2,
-    "sine_j2_harsh": 0.8,
-    "teleop_wave_j2j3j5_harsh": 1.2,
-    "joint_circle_j2j3_harsh": 1.6,
-    "joint_square_j2j3_harsh": 1.4,
-    "joint_insert_line_harsh": 1.8,
-}
 BIG_PENALTY = 1.0e9
 VERBOSE_COMMANDS = False
 HEAVY_JOINTS = (1, 2)  # zero-based J2/J3.
 WRIST_JOINTS = (3, 4, 5)
+DEFAULT_PROFILE_NAME = "teleop_core"
 
 
 @dataclass(frozen=True)
@@ -96,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--budget", type=int, default=30, help="Total candidates including baseline and model seed")
     parser.add_argument("--seed", type=int, default=1, help="Random seed")
-    parser.add_argument("--profile", default="teleop_core", help="Tuning profile name")
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_NAME, help="Tuning profile name or YAML path")
     parser.add_argument("--optimizer", choices=("cma", "random"), default="cma", help="Candidate optimizer")
     parser.add_argument("--config", type=Path, default=Path("configs/arm6_placeholder.yaml"))
     parser.add_argument("--build-dir", type=Path, default=Path("build"), help="Existing CMake build directory")
@@ -134,6 +124,19 @@ def git_tracked_dirty(root: Path) -> str:
     return completed.stdout.strip()
 
 
+def git_tracked_dirty_paths(root: Path) -> list[str]:
+    dirty = git_tracked_dirty(root)
+    paths: list[str] = []
+    for line in dirty.splitlines():
+        if not line:
+            continue
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1].strip()
+        paths.append(path.replace("\\", "/"))
+    return paths
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -144,6 +147,32 @@ def load_yaml(path: Path) -> dict[str, Any]:
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=False, default_flow_style=False)
     path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def resolve_profile_path(profile: str, root: Path) -> Path:
+    candidate = Path(profile)
+    if candidate.suffix in (".yaml", ".yml") or any(sep in profile for sep in ("/", "\\")):
+        return rel_or_abs(candidate, root)
+    return root / "tools" / "tuning_profiles" / f"{profile}.yaml"
+
+
+def load_profile(path: Path) -> dict[str, Any]:
+    profile = load_yaml(path)
+    profile.setdefault("main_scenarios", list(DEFAULT_MAIN_SCENARIOS))
+    profile.setdefault("check_scenarios", list(DEFAULT_CHECK_SCENARIOS))
+    profile.setdefault("scenario_weights", {})
+    profile.setdefault("tool_tracking_prefixes", ["tool_", "joint_", "teleop_"])
+    profile.setdefault("continuous_motion_scenarios", [])
+    profile.setdefault("regression_guard", {})
+    profile.setdefault("loss", {})
+    return profile
+
+
+def path_relative_to_root(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def benchmark_exe(build_dir: Path) -> Path:
@@ -595,7 +624,21 @@ def checked_metric(summary: dict[str, Any], key: str, reason: list[str]) -> floa
     return value
 
 
-def scenario_loss(scenario: str, summary: dict[str, Any]) -> tuple[float, list[str]]:
+def loss_term(profile: dict[str, Any], name: str, value: float, continuous_motion: bool = False) -> float:
+    terms = profile.get("loss", {})
+    term = terms.get(name, {})
+    if not isinstance(term, dict):
+        return 0.0
+    weight_key = "continuous_weight" if continuous_motion and "continuous_weight" in term else "weight"
+    weight = float(term.get(weight_key, 0.0))
+    scale = float(term.get("scale", 1.0))
+    power = float(term.get("power", 2.0))
+    if weight <= 0.0 or scale <= 0.0:
+        return 0.0
+    return weight * (value / scale) ** power
+
+
+def scenario_loss(scenario: str, summary: dict[str, Any], profile: dict[str, Any]) -> tuple[float, list[str]]:
     reasons: list[str] = []
     q_rms = checked_metric(summary, "q_err_rms_mean", reasons)
     q_max = checked_metric(summary, "q_err_max_abs", reasons)
@@ -606,7 +649,9 @@ def scenario_loss(scenario: str, summary: dict[str, Any]) -> tuple[float, list[s
     actuator_lag = checked_metric(summary, "actuator_lag_max_abs", reasons)
     arm_contact = checked_metric(summary, "arm_contact_ratio", reasons)
     torque_margin = checked_metric(summary, "torque_margin_min_nm", reasons)
-    if scenario.startswith("tool_"):
+    tracking_prefixes = tuple(str(item) for item in profile.get("tool_tracking_prefixes", []))
+    has_tool_tracking = scenario.startswith(tracking_prefixes)
+    if has_tool_tracking:
         tool_rms = checked_metric(summary, "tool_pos_err_rms_m", reasons)
         tool_max = checked_metric(summary, "tool_pos_err_max_m", reasons)
     else:
@@ -629,23 +674,26 @@ def scenario_loss(scenario: str, summary: dict[str, Any]) -> tuple[float, list[s
     if reasons or any(not math.isfinite(value) for value in values):
         return BIG_PENALTY, reasons
 
+    continuous_motion = scenario in set(str(item) for item in profile.get("continuous_motion_scenarios", []))
+
     loss = 0.0
-    loss += 10.0 * (tool_rms / 0.04) ** 2
-    loss += 4.0 * (tool_max / 0.12) ** 2
-    loss += 2.0 * (q_rms / 0.08) ** 2
-    loss += 1.4 * (q_max / 0.30) ** 2
-    loss += 0.9 * (dq_rms / 0.60) ** 2
-    loss += 1.8 * (steady_dq / 0.05) ** 2
-    loss += 1.8 * (tau_slew / 180.0) ** 2
-    loss += 24.0 * saturation
-    loss += 5.0 * (actuator_lag / 14.0) ** 2
-    loss += 5.0 * (max(0.0, 2.0 - torque_margin) / 2.0) ** 2
-    loss += 70.0 * arm_contact
+    loss += loss_term(profile, "tool_pos_err_rms_m", tool_rms, continuous_motion)
+    loss += loss_term(profile, "tool_pos_err_max_m", tool_max, continuous_motion)
+    loss += loss_term(profile, "q_err_rms_mean", q_rms, continuous_motion)
+    loss += loss_term(profile, "q_err_max_abs", q_max, continuous_motion)
+    loss += loss_term(profile, "dq_err_rms_mean", dq_rms, continuous_motion)
+    loss += loss_term(profile, "steady_dq_rms_mean", steady_dq, continuous_motion)
+    loss += loss_term(profile, "tau_slew_rms_mean", tau_slew, continuous_motion)
+    loss += loss_term(profile, "saturation_ratio_max", saturation, continuous_motion)
+    loss += loss_term(profile, "actuator_lag_max_abs", actuator_lag, continuous_motion)
+    loss += loss_term(profile, "torque_margin_shortfall_nm", max(0.0, 2.0 - torque_margin), continuous_motion)
+    loss += loss_term(profile, "arm_contact_ratio", arm_contact, continuous_motion)
     return loss, reasons
 
 
 def aggregate_loss(
     scenario_records: dict[str, dict[str, Any]],
+    profile: dict[str, Any],
     baseline_losses: dict[str, float] | None = None,
 ) -> tuple[float, dict[str, float], list[str]]:
     total = 0.0
@@ -654,8 +702,8 @@ def aggregate_loss(
     reasons: list[str] = []
     regression_penalty = 0.0
     for scenario, record in scenario_records.items():
-        loss, scenario_reasons = scenario_loss(scenario, record["summary"])
-        weight = SCENARIO_WEIGHTS.get(scenario, 1.0)
+        loss, scenario_reasons = scenario_loss(scenario, record["summary"], profile)
+        weight = float(profile.get("scenario_weights", {}).get(scenario, 1.0))
         losses[scenario] = loss
         total += weight * loss
         weight_sum += weight
@@ -663,9 +711,13 @@ def aggregate_loss(
             reasons.extend(f"{scenario}: {reason}" for reason in scenario_reasons)
         if baseline_losses is not None and scenario in baseline_losses:
             baseline_loss = baseline_losses[scenario]
-            allowed_loss = baseline_loss * 1.08 + 0.10
-            if math.isfinite(loss) and math.isfinite(baseline_loss) and loss > allowed_loss:
-                penalty = 4.0 * weight * (loss - allowed_loss)
+            guard = profile.get("regression_guard", {})
+            relative = float(guard.get("relative_allowance", 0.03))
+            absolute = float(guard.get("absolute_allowance", 0.05))
+            penalty_weight = float(guard.get("penalty_weight", 4.0))
+            allowed_loss = baseline_loss * (1.0 + relative) + absolute
+            if guard.get("enabled", True) and math.isfinite(loss) and math.isfinite(baseline_loss) and loss > allowed_loss:
+                penalty = penalty_weight * weight * (loss - allowed_loss)
                 regression_penalty += penalty
                 losses[f"{scenario}__regression_penalty"] = penalty
     if weight_sum <= 0.0:
@@ -680,6 +732,7 @@ def evaluate_candidate(
     override_path: Path,
     out_dir: Path,
     scenarios: tuple[str, ...],
+    profile: dict[str, Any],
     timeout_s: float,
     baseline_losses: dict[str, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -687,7 +740,7 @@ def evaluate_candidate(
     records: dict[str, dict[str, Any]] = {}
     for scenario in progress_iter(scenarios, f"{out_dir.name} scenarios", unit="case", leave=False):
         records[scenario] = run_one_scenario(root, exe, scenario, candidate_path, override_path, out_dir, timeout_s)
-    loss, scenario_losses, reasons = aggregate_loss(records, baseline_losses)
+    loss, scenario_losses, reasons = aggregate_loss(records, profile, baseline_losses)
     return {"loss": loss, "scenario_losses": scenario_losses, "failure_reasons": reasons}, records
 
 
@@ -712,6 +765,7 @@ def evaluate_and_record(
     stage: str,
     config: dict[str, Any],
     scenarios: tuple[str, ...],
+    profile: dict[str, Any],
     timeout_s: float,
     baseline_losses: dict[str, float] | None,
 ) -> dict[str, Any]:
@@ -734,6 +788,7 @@ def evaluate_and_record(
             override_path,
             out_dir,
             scenarios,
+            profile,
             timeout_s,
             baseline_losses,
         )
@@ -786,7 +841,14 @@ def scenario_delta_lines(baseline: dict[str, Any], best: dict[str, Any]) -> list
     return lines
 
 
-def write_summary(run_dir: Path, records: list[dict[str, Any]], baseline: dict[str, Any], model_seed: dict[str, Any], best: dict[str, Any]) -> None:
+def write_summary(
+    run_dir: Path,
+    profile: dict[str, Any],
+    records: list[dict[str, Any]],
+    baseline: dict[str, Any],
+    model_seed: dict[str, Any],
+    best: dict[str, Any],
+) -> None:
     ranked = sorted(records, key=lambda item: item.get("loss", BIG_PENALTY))
     baseline_loss = float(baseline.get("loss", BIG_PENALTY))
     seed_loss = float(model_seed.get("loss", BIG_PENALTY))
@@ -802,6 +864,7 @@ def write_summary(run_dir: Path, records: list[dict[str, Any]], baseline: dict[s
         f"- best loss: `{best_loss:.6g}`",
         f"- improvement vs baseline: `{improvement:.2f}%`",
         f"- result: `{'improved' if improved else 'no improvement'}`",
+        f"- profile: `{profile.get('name', 'unnamed')}` (`profile.yaml`)",
         "",
         "## Top Candidates",
         "",
@@ -853,6 +916,7 @@ def evaluate_random_candidates(
     count: int,
     seed_config: dict[str, Any],
     scenarios: tuple[str, ...],
+    profile: dict[str, Any],
     timeout_s: float,
     baseline_losses: dict[str, float] | None,
     seed: int,
@@ -863,7 +927,7 @@ def evaluate_random_candidates(
         index = start_index + offset
         config = make_scaled_candidate(index, "random", seed_config, random_vector(rng))
         record = evaluate_and_record(
-            root, exe, run_dir, candidate_dir, index, "random", config, scenarios, timeout_s, baseline_losses
+            root, exe, run_dir, candidate_dir, index, "random", config, scenarios, profile, timeout_s, baseline_losses
         )
         records.append(record)
         write_ranking(run_dir, records)
@@ -878,6 +942,7 @@ def evaluate_cma_candidates(
     count: int,
     seed_config: dict[str, Any],
     scenarios: tuple[str, ...],
+    profile: dict[str, Any],
     timeout_s: float,
     baseline_losses: dict[str, float] | None,
     seed: int,
@@ -888,7 +953,7 @@ def evaluate_cma_candidates(
     if count < 4:
         print("budget after baseline/model_seed is too small for CMA-style ES; using random high-level search.", file=sys.stderr)
         evaluate_random_candidates(
-            root, exe, run_dir, candidate_dir, start_index, count, seed_config, scenarios, timeout_s, baseline_losses, seed, records
+            root, exe, run_dir, candidate_dir, start_index, count, seed_config, scenarios, profile, timeout_s, baseline_losses, seed, records
         )
         return
 
@@ -913,7 +978,7 @@ def evaluate_cma_candidates(
             index = start_index + evaluated
             config = make_scaled_candidate(index, "cma", seed_config, vector)
             record = evaluate_and_record(
-                root, exe, run_dir, candidate_dir, index, "cma", config, scenarios, timeout_s, baseline_losses
+                root, exe, run_dir, candidate_dir, index, "cma", config, scenarios, profile, timeout_s, baseline_losses
             )
             records.append(record)
             write_ranking(run_dir, records)
@@ -947,20 +1012,24 @@ def main() -> int:
     config_path = rel_or_abs(args.config, root)
     build_dir = rel_or_abs(args.build_dir, root)
     out_root = rel_or_abs(args.out_root, root)
-    main_scenarios = tuple(args.scenario) if args.scenario else DEFAULT_MAIN_SCENARIOS
-    check_scenarios = tuple(args.check_scenario) if args.check_scenario else (() if args.scenario else DEFAULT_CHECK_SCENARIOS)
-
-    if args.profile != "teleop_core":
-        print(f"unsupported profile: {args.profile}", file=sys.stderr)
+    profile_path = resolve_profile_path(args.profile, root)
+    if not profile_path.exists():
+        print(f"Tuning profile not found: {profile_path}", file=sys.stderr)
         return 2
+    profile = load_profile(profile_path)
+    main_scenarios = tuple(args.scenario) if args.scenario else tuple(str(item) for item in profile["main_scenarios"])
+    check_scenarios = tuple(args.check_scenario) if args.check_scenario else (() if args.scenario else tuple(str(item) for item in profile["check_scenarios"]))
+
     if args.budget < 2:
         print("--budget must be at least 2 because candidate 0 is baseline and candidate 1 is model_seed.", file=sys.stderr)
         return 2
     if not args.allow_dirty:
-        dirty = git_tracked_dirty(root)
-        if dirty:
-            print("Tracked worktree is dirty; commit/stash changes or pass --allow-dirty.", file=sys.stderr)
-            print(dirty, file=sys.stderr)
+        dirty_paths = git_tracked_dirty_paths(root)
+        allowed_dirty = {path_relative_to_root(profile_path, root)}
+        unexpected_dirty = [path for path in dirty_paths if path not in allowed_dirty]
+        if unexpected_dirty:
+            print("Tracked worktree has non-profile changes; commit/stash them or pass --allow-dirty.", file=sys.stderr)
+            print("\n".join(unexpected_dirty), file=sys.stderr)
             return 2
 
     exe = benchmark_exe(build_dir)
@@ -972,6 +1041,7 @@ def main() -> int:
     run_dir = out_root / timestamp
     candidate_dir = run_dir / "candidates"
     candidate_dir.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(profile_path, run_dir / "profile.yaml")
 
     original_config = load_yaml(config_path)
     diagnostics = sample_model_diagnostics(original_config)
@@ -985,7 +1055,7 @@ def main() -> int:
     baseline_config = copy.deepcopy(original_config)
     baseline_config["tuning"] = {"candidate": 0, "stage": "baseline"}
     baseline_record = evaluate_and_record(
-        root, exe, run_dir, candidate_dir, 0, "baseline", baseline_config, main_scenarios, args.timeout_s, None
+        root, exe, run_dir, candidate_dir, 0, "baseline", baseline_config, main_scenarios, profile, args.timeout_s, None
     )
     records.append(baseline_record)
     baseline_losses = {
@@ -996,7 +1066,7 @@ def main() -> int:
     write_ranking(run_dir, records)
 
     model_seed_record = evaluate_and_record(
-        root, exe, run_dir, candidate_dir, 1, "model_seed", seed_config, main_scenarios, args.timeout_s, baseline_losses
+        root, exe, run_dir, candidate_dir, 1, "model_seed", seed_config, main_scenarios, profile, args.timeout_s, baseline_losses
     )
     records.append(model_seed_record)
     write_ranking(run_dir, records)
@@ -1013,6 +1083,7 @@ def main() -> int:
             remaining,
             seed_config,
             main_scenarios,
+            profile,
             args.timeout_s,
             baseline_losses,
             args.seed,
@@ -1028,6 +1099,7 @@ def main() -> int:
             remaining,
             seed_config,
             main_scenarios,
+            profile,
             args.timeout_s,
             baseline_losses,
             args.seed,
@@ -1048,6 +1120,7 @@ def main() -> int:
             Path(baseline_record["overrides"]),
             run_dir / "candidate_000_check",
             check_scenarios,
+            profile,
             args.timeout_s,
         )
         if best_record["candidate"] == baseline_record["candidate"]:
@@ -1060,13 +1133,14 @@ def main() -> int:
                 Path(best_record["overrides"]),
                 run_dir / f"candidate_{best_record['candidate']:03d}_check",
                 check_scenarios,
+                profile,
                 args.timeout_s,
             )
         baseline_record["check_metrics"] = baseline_check
         best_record["check_metrics"] = best_check
         write_ranking(run_dir, records)
 
-    write_summary(run_dir, records, baseline_record, model_seed_record, best_record)
+    write_summary(run_dir, profile, records, baseline_record, model_seed_record, best_record)
     print(f"best: candidate_{best_record['candidate']:03d} loss={float(best_record['loss']):.6g}")
     print(f"wrote: {run_dir}")
     return 0

@@ -1,0 +1,89 @@
+name: teleop_core
+
+main_scenarios:
+  - hold_zero_harsh
+  - step_j2_harsh
+  - step_j3_harsh
+  - coupled_j2j3_harsh
+  - sine_j2_harsh
+  - teleop_wave_j2j3j5_harsh
+  - joint_circle_j2j3_harsh
+  - joint_square_j2j3_harsh
+  - joint_insert_line_harsh
+
+check_scenarios:
+  - tool_circle_xz_harsh
+  - tool_square_xz_harsh
+  - tool_insert_line_harsh
+  - tool_circle_xy_harsh
+  - tool_circle_yz_harsh
+  - tool_square_xy_harsh
+  - tool_square_yz_harsh
+  - straight_arm_lift_harsh
+
+scenario_weights:
+  hold_zero_harsh: 0.8
+  step_j2_harsh: 1.0
+  step_j3_harsh: 1.0
+  coupled_j2j3_harsh: 1.2
+  sine_j2_harsh: 0.8
+  teleop_wave_j2j3j5_harsh: 1.2
+  joint_circle_j2j3_harsh: 1.6
+  joint_square_j2j3_harsh: 1.4
+  joint_insert_line_harsh: 1.8
+
+tool_tracking_prefixes:
+  - tool_
+  - joint_
+  - teleop_
+
+continuous_motion_scenarios:
+  - sine_j2_harsh
+  - teleop_wave_j2j3j5_harsh
+  - joint_circle_j2j3_harsh
+  - joint_square_j2j3_harsh
+
+regression_guard:
+  enabled: true
+  relative_allowance: 0.03
+  absolute_allowance: 0.05
+  penalty_weight: 4.0
+
+loss:
+  tool_pos_err_rms_m:
+    weight: 12.0
+    scale: 0.025
+  tool_pos_err_max_m:
+    weight: 5.0
+    scale: 0.080
+  q_err_rms_mean:
+    weight: 4.0
+    scale: 0.035
+  q_err_max_abs:
+    weight: 2.2
+    scale: 0.140
+  dq_err_rms_mean:
+    weight: 1.5
+    scale: 0.45
+  steady_dq_rms_mean:
+    weight: 1.5
+    continuous_weight: 0.25
+    scale: 0.060
+  tau_slew_rms_mean:
+    weight: 0.75
+    continuous_weight: 0.45
+    scale: 180.0
+  saturation_ratio_max:
+    weight: 36.0
+    scale: 1.0
+    power: 1.0
+  actuator_lag_max_abs:
+    weight: 5.0
+    scale: 14.0
+  torque_margin_shortfall_nm:
+    weight: 5.0
+    scale: 2.0
+  arm_contact_ratio:
+    weight: 70.0
+    scale: 1.0
+    power: 1.0

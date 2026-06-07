@@ -169,9 +169,14 @@ YAML baseline, candidate 1 is a model-derived seed, and later candidates are
 internal CMA-style high-level scale samples around that seed. The tuner does
 not depend on the external `cma` Python package. The default main loss is now
 joint-space centric; task-space tool paths are check-only diagnostics.
+Loss weights, scenario lists, and regression guards live in
+`tools\tuning_profiles\teleop_core.yaml`. The tuner copies the active profile to
+each run directory as `profile.yaml`. Editing only the active profile is allowed
+without `--allow-dirty`; other tracked changes still stop tuning by default.
 
 ```powershell
 python tools\tune_control_params.py --budget 30 --seed 1
+python tools\tune_control_params.py --profile tools\tuning_profiles\teleop_core.yaml --budget 30 --seed 1
 ```
 
 Smoke-test the tuner with a tiny budget and two quick scenarios:
